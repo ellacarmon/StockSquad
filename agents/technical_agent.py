@@ -57,17 +57,18 @@ Report Structure:
 
 Always base your analysis on the data. Be objective and highlight both bullish and bearish signals."""
 
-    def __init__(self, memory: Optional[ShortTermMemory] = None):
+    def __init__(self, memory: Optional[ShortTermMemory] = None, model_type: str = "xgboost"):
         """
         Initialize the TechnicalAgent.
 
         Args:
             memory: Optional short-term memory instance
+            model_type: ML model type to use for signal scoring (e.g. 'xgboost', 'ensemble_unanimous')
         """
         self.settings = get_settings()
         self.memory = memory
         self.ta_calculator = TechnicalIndicators()
-        self.signal_scorer = SignalScorer()
+        self.signal_scorer = SignalScorer(model_type=model_type)
 
         # Initialize Azure OpenAI Client
         self.client = self._initialize_client()

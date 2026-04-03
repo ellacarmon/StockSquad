@@ -618,54 +618,127 @@ export default function App() {
             </div>
 
             {/* Agent Consensus Summary */}
-            <div style={{ 
-              width: '100%', 
-              marginBottom: 40, 
-              padding: '24px 32px', 
-              background: 'var(--bg-card)', 
-              borderRadius: 16, 
-              border: '1px solid var(--border-color)', 
-              boxShadow: '0 4px 20px rgba(0,0,0,0.1)',
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 20
-            }}>
-              <h3 style={{ margin: 0, fontSize: '1.2rem', color: 'var(--text-main)', fontWeight: 600 }}>AI Squad Consensus</h3>
-              
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '1px' }}>Technical Signal</span>
-                  <span style={getPillStyle(
-                    reportDetails?.full_analysis?.technical_analysis?.signal_score?.direction ||
-                    reportDetails?.full_analysis?.technical_analysis?.overall_signal ||
-                    reportDetails?.full_analysis?.technical_analysis?.signal
-                  )}>
-                    {reportDetails?.full_analysis?.technical_analysis?.signal_score?.direction ||
-                     reportDetails?.full_analysis?.technical_analysis?.overall_signal ||
-                     reportDetails?.full_analysis?.technical_analysis?.signal ||
-                     'N/A'}
-                  </span>
-                </div>
-                
-                <div style={{ width: 1, height: 40, background: 'var(--border-color)' }}></div>
-                
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'center' }}>
-                  <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '1px' }}>Fundamental Health</span>
-                  <span style={getPillStyle(reportDetails?.full_analysis?.fundamental_analysis?.fundamental_score?.rating)}>
-                    {reportDetails?.full_analysis?.fundamental_analysis?.fundamental_score?.rating || 'N/A'}
-                  </span>
-                </div>
+            {(() => {
+              const fa = reportDetails?.full_analysis || {};
 
-                <div style={{ width: 1, height: 40, background: 'var(--border-color)' }}></div>
+              // Deep search helper: recursively finds a value by key name
+              const deepFind = (obj, targetKey) => {
+                if (!obj || typeof obj !== 'object') return undefined;
+                if (obj[targetKey] !== undefined && obj[targetKey] !== null) return obj[targetKey];
+                for (const key of Object.keys(obj)) {
+                  const found = deepFind(obj[key], targetKey);
+                  if (found !== undefined) return found;
+                }
+                return undefined;
+              };
+
+              // --- Technical Signal ---
+              const techAnalysis = fa.technical_analysis || {};
+              let techSignal =
+                techAnalysis?.signal_score?.direction ||
+                techAnalysis?.signal_score?.recommendation ||
+                techAnalysis?.overall_signal ||
+                techAnalysis?.signal;
+
+              // Fallback: search deeply in technical_analysis
+              if (!techSignal) {
+                techSignal = deepFind(techAnalysis, 'direction') ||
+                             deepFind(techAnalysis, 'recommendation') ||
+                             deepFind(techAnalysis, 'overall_signal');
+              }
+
+              // Last resort: parse from report text
+              if (!techSignal && techAnalysis?.report) {
+                const r = techAnalysis.report.toLowerCase();
+                if (r.includes('strong buy') || r.includes('strongly bullish')) techSignal = 'STRONG BUY';
+                else if (r.includes('bullish') || r.includes('buy')) techSignal = 'BULLISH';
+                else if (r.includes('strong sell') || r.includes('strongly bearish')) techSignal = 'STRONG SELL';
+                else if (r.includes('bearish') || r.includes('sell')) techSignal = 'BEARISH';
+                else if (r.includes('neutral') || r.includes('hold')) techSignal = 'NEUTRAL';
+              }
+
+              // --- Fundamental Health ---
+              const fundAnalysis = fa.fundamental_analysis || {};
+              let fundRating =
+                fundAnalysis?.fundamental_score?.rating ||
+                fundAnalysis?.rating;
+
+              if (!fundRating) {
+                fundRating = deepFind(fundAnalysis, 'rating') ||
+                             deepFind(fundAnalysis, 'recommendation');
+              }
+
+              if (!fundRating && fundAnalysis?.report) {
+                const r = fundAnalysis.report.toLowerCase();
+                if (r.includes('strong buy')) fundRating = 'STRONG BUY';
+                else if (r.includes('buy')) fundRating = 'BUY';
+                else if (r.includes('sell')) fundRating = 'SELL';
+                else if (r.includes('hold')) fundRating = 'HOLD';
+              }
+
+              // --- Social Sentiment ---
+              const socialAnalysis = fa.social_media_analysis || {};
+              let socialSentiment =
+                socialAnalysis?.sentiment_analysis?.overall?.sentiment;
+
+              if (!socialSentiment) {
+                socialSentiment = deepFind(socialAnalysis, 'sentiment');
+              }
+
+              if (!socialSentiment && socialAnalysis?.report) {
+                const r = socialAnalysis.report.toLowerCase();
+                // Look for the explicit section
+                const idx = r.indexOf('overall retail sentiment');
+                const section = idx !== -1 ? r.substring(idx, idx + 200) : r;
+                if (section.includes('bullish')) socialSentiment = 'Bullish';
+                else if (section.includes('bearish')) socialSentiment = 'Bearish';
+                else if (section.includes('neutral')) socialSentiment = 'Neutral';
+              }
+
+              return (
+              <div style={{ 
+                width: '100%', 
+                marginBottom: 40, 
+                padding: '24px 32px', 
+                background: 'var(--bg-card)', 
+                borderRadius: 16, 
+                border: '1px solid var(--border-color)', 
+                boxShadow: '0 4px 20px rgba(0,0,0,0.1)',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 20
+              }}>
+                <h3 style={{ margin: 0, fontSize: '1.2rem', color: 'var(--text-main)', fontWeight: 600 }}>AI Squad Consensus</h3>
                 
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-end' }}>
-                  <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '1px' }}>Social Sentiment</span>
-                  <span style={getPillStyle(reportDetails?.full_analysis?.social_media_analysis?.sentiment_analysis?.overall?.sentiment)}>
-                    {reportDetails?.full_analysis?.social_media_analysis?.sentiment_analysis?.overall?.sentiment || 'N/A'}
-                  </span>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '1px' }}>Technical Signal</span>
+                    <span style={getPillStyle(techSignal)}>
+                      {techSignal || 'N/A'}
+                    </span>
+                  </div>
+                  
+                  <div style={{ width: 1, height: 40, background: 'var(--border-color)' }}></div>
+                  
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'center' }}>
+                    <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '1px' }}>Fundamental Health</span>
+                    <span style={getPillStyle(fundRating)}>
+                      {fundRating || 'N/A'}
+                    </span>
+                  </div>
+
+                  <div style={{ width: 1, height: 40, background: 'var(--border-color)' }}></div>
+                  
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6, alignItems: 'flex-end' }}>
+                    <span style={{ fontSize: '0.85rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '1px' }}>Social Sentiment</span>
+                    <span style={getPillStyle(socialSentiment)}>
+                      {socialSentiment || 'N/A'}
+                    </span>
+                  </div>
                 </div>
               </div>
-            </div>
+              );
+            })()}
 
             {reportDetails?.full_analysis?.data_collection?.stock_data?.price_history?.data && (() => {
               const rawData = reportDetails.full_analysis.data_collection.stock_data.price_history.data;
