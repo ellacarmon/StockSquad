@@ -92,3 +92,6 @@ credentials.json
 # Telegram Bot State
 telegram_bot/user_sessions/
 telegram_bot/*.session
+
+# Kiro
+.kiro
