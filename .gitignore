@@ -1,0 +1,94 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+venv/
+env/
+ENV/
+.venv
+
+# Environment variables
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# Data
+*.csv
+*.db
+*.sqlite
+*.sqlite3
+data/*.json
+data/*.parquet
+
+# ChromaDB
+chroma_db/
+*.chroma
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Azure
+.azure/
+
+# ML Models (Keep metadata, exclude large binary files)
+*.pkl
+*.joblib
+ml/models/*.joblib
+ml/models/*.h5
+ml/models/*.pt
+!ml/models/feature_names.json
+!ml/models/training_metadata.json
+!ml/models/README.md
+
+# ML Training Data
+ml/training/*.db
+ml/training/*.sqlite
+ml/data/
+
+# Backtest Results
+ml/backtesting/results/*.json
+ml/backtesting/results/*.csv
+!ml/backtesting/results/example_*.json
+
+# Secrets and Keys
+*.key
+*.pem
+secrets/
+credentials.json
+
+# Telegram Bot State
+telegram_bot/user_sessions/
+telegram_bot/*.session

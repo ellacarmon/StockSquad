@@ -1,0 +1,198 @@
+[
+  {
+    "date": "2023-10-07",
+    "title": "Israel-Hamas War Begins",
+    "category": "geopolitical",
+    "description": "Hamas launches major attack on Israel, sparking regional conflict",
+    "impact": "high"
+  },
+  {
+    "date": "2024-02-24",
+    "title": "Russia-Ukraine War Anniversary",
+    "category": "geopolitical",
+    "description": "Two years since Russia's invasion of Ukraine",
+    "impact": "medium"
+  },
+  {
+    "date": "2024-01-01",
+    "title": "Fed Rate Decision",
+    "category": "monetary",
+    "description": "Federal Reserve maintains interest rates at 5.25-5.50%",
+    "impact": "high"
+  },
+  {
+    "date": "2024-03-20",
+    "title": "Fed Rate Cut",
+    "category": "monetary",
+    "description": "Federal Reserve cuts rates by 25 basis points",
+    "impact": "high"
+  },
+  {
+    "date": "2024-07-26",
+    "title": "Fed Rate Decision",
+    "category": "monetary",
+    "description": "Federal Reserve maintains rates steady",
+    "impact": "medium"
+  },
+  {
+    "date": "2024-11-05",
+    "title": "U.S. Presidential Election",
+    "category": "political",
+    "description": "2024 United States Presidential Election",
+    "impact": "high"
+  },
+  {
+    "date": "2025-01-20",
+    "title": "Presidential Inauguration",
+    "category": "political",
+    "description": "New U.S. President inaugurated",
+    "impact": "high"
+  },
+  {
+    "date": "2024-04-01",
+    "title": "Iran-Israel Escalation",
+    "category": "geopolitical",
+    "description": "Major escalation in Iran-Israel tensions",
+    "impact": "high"
+  },
+  {
+    "date": "2024-08-05",
+    "title": "Global Market Selloff",
+    "category": "economic",
+    "description": "Sharp global market correction triggered by Japan rate hike",
+    "impact": "high"
+  },
+  {
+    "date": "2024-12-18",
+    "title": "Fed Rate Cut",
+    "category": "monetary",
+    "description": "Federal Reserve cuts rates by 25 basis points",
+    "impact": "high"
+  },
+  {
+    "date": "2025-03-19",
+    "title": "Fed Rate Decision",
+    "category": "monetary",
+    "description": "FOMC announces monetary policy decision",
+    "impact": "high"
+  },
+  {
+    "date": "2024-03-10",
+    "title": "Silicon Valley Bank Collapse Anniversary",
+    "category": "economic",
+    "description": "One year since SVB collapse and banking crisis",
+    "impact": "medium"
+  },
+  {
+    "date": "2024-06-01",
+    "title": "China-Taiwan Tensions",
+    "category": "geopolitical",
+    "description": "Increased military activity in Taiwan Strait",
+    "impact": "medium"
+  },
+  {
+    "date": "2024-09-15",
+    "title": "Oil Price Spike",
+    "category": "economic",
+    "description": "Oil prices surge due to Middle East tensions",
+    "impact": "high"
+  },
+  {
+    "date": "2025-01-01",
+    "title": "New Year Economic Outlook",
+    "category": "economic",
+    "description": "Start of new fiscal year with economic uncertainty",
+    "impact": "medium"
+  },
+  {
+    "date": "2025-04-02",
+    "title": "Liberation Day Tariffs",
+    "category": "economic",
+    "description": "U.S. announces sweeping reciprocal tariffs on global trade partners",
+    "impact": "high"
+  },
+  {
+    "date": "2025-05-07",
+    "title": "Fed Rate Decision",
+    "category": "monetary",
+    "description": "FOMC holds rates steady amid tariff uncertainty",
+    "impact": "high"
+  },
+  {
+    "date": "2025-06-18",
+    "title": "Fed Rate Decision",
+    "category": "monetary",
+    "description": "Federal Reserve monetary policy announcement",
+    "impact": "high"
+  },
+  {
+    "date": "2025-07-30",
+    "title": "Fed Rate Decision",
+    "category": "monetary",
+    "description": "FOMC mid-year rate decision",
+    "impact": "high"
+  },
+  {
+    "date": "2025-09-17",
+    "title": "Fed Rate Decision",
+    "category": "monetary",
+    "description": "Federal Reserve September policy meeting",
+    "impact": "high"
+  },
+  {
+    "date": "2025-05-12",
+    "title": "U.S.-China Trade Deal",
+    "category": "economic",
+    "description": "U.S. and China agree to temporarily reduce tariffs",
+    "impact": "high"
+  },
+  {
+    "date": "2025-08-11",
+    "title": "China-Taiwan Escalation",
+    "category": "geopolitical",
+    "description": "Renewed tensions in the Taiwan Strait",
+    "impact": "high"
+  },
+  {
+    "date": "2025-10-29",
+    "title": "Fed Rate Decision",
+    "category": "monetary",
+    "description": "FOMC Q4 rate decision",
+    "impact": "high"
+  },
+  {
+    "date": "2025-12-17",
+    "title": "Fed Rate Decision",
+    "category": "monetary",
+    "description": "Federal Reserve year-end policy meeting",
+    "impact": "high"
+  },
+  {
+    "date": "2026-01-28",
+    "title": "Fed Rate Decision",
+    "category": "monetary",
+    "description": "First FOMC meeting of 2026",
+    "impact": "high"
+  },
+  {
+    "date": "2026-03-18",
+    "title": "Fed Rate Decision",
+    "category": "monetary",
+    "description": "FOMC March policy decision",
+    "impact": "high"
+  },
+  {
+    "date": "2025-11-04",
+    "title": "U.S. Midterm Elections",
+    "category": "political",
+    "description": "2025 U.S. off-year and state elections",
+    "impact": "medium"
+  },
+  {
+    "date": "2026-02-01",
+    "title": "EU Trade Retaliation",
+    "category": "economic",
+    "description": "European Union imposes retaliatory tariffs on U.S. goods",
+    "impact": "high"
+  }
+]

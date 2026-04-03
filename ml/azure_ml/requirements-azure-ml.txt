@@ -1,0 +1,11 @@
+# Azure ML Training Requirements (Optional)
+# Only needed if training on Azure ML managed compute
+
+# Azure ML SDK v2 (for submitting training jobs)
+azure-ai-ml>=1.12.0
+
+# MLflow integration
+azureml-mlflow>=1.55.0
+
+# Note: If you get errors with azure-ai-ml, try:
+#   pip install --upgrade azure-ai-ml
