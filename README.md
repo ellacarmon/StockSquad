@@ -9,6 +9,10 @@
 
 StockSquad coordinates a squad of specialized AI agents that each own a distinct analytical role: data collection, technical analysis, sentiment scoring, fundamental research, and adversarial debate. Together they produce structured investment research reports for any ticker.
 
+<p align="center">
+  <img src="docs/screenshots/report_view.png" alt="StockSquad Dashboard" width="800">
+</p>
+
 ## Features
 
 - **7 Specialized Agents** — Orchestrator, Data, Technical, Sentiment, Social Media, Fundamentals, Devil's Advocate
@@ -16,6 +20,7 @@ StockSquad coordinates a squad of specialized AI agents that each own a distinct
 - **ML Signal Scoring** — Ensemble of XGBoost, Random Forest, and LightGBM models with walk-forward validation
 - **Backtesting Engine** — Evaluate model performance on historical data with transaction cost modeling
 - **Telegram Bot** — Trigger full analyses via `/analyze AAPL` from any device
+- **Web Dashboard** — Interactive React dashboard with peer comparison charts, global event overlays, and AI chat
 - **Rich CLI** — Beautiful terminal output with progress indicators via [Rich](https://github.com/Textualize/rich)
 - **Azure ML Integration** — Distributed model training on managed compute clusters
 
@@ -207,6 +212,59 @@ PYTHONPATH=. python3 ml/backtesting/run_backtest.py \
 
 > Transaction costs (0.2% round-trip) are included in all results.
 
+## Web Dashboard
+
+StockSquad includes a full-featured web dashboard built with React + Vite for interactive analysis.
+
+```bash
+# Start the backend
+uvicorn ui.api:app --host 127.0.0.1 --port 8000
+
+# Start the frontend (in a separate terminal)
+cd ui/web && npm run dev
+```
+
+### Dashboard Features
+
+<table>
+<tr>
+<td width="50%">
+
+**📊 Analysis Reports**
+Interactive peer comparison charts, AI Squad Consensus with signal pills, and rendered markdown reports.
+
+<img src="docs/screenshots/report_content.png" alt="Report Content" width="400">
+
+</td>
+<td width="50%">
+
+**🌍 Global Events Overlay**
+Toggle macro events (Fed decisions, geopolitical, economic, political) directly on the price chart with per-category filters.
+
+<img src="docs/screenshots/global_events.png" alt="Global Events" width="400">
+
+</td>
+</tr>
+<tr>
+<td width="50%">
+
+**💬 Report Chat**
+Ask follow-up questions about any analysis with optional web search. Slides in from the right.
+
+<img src="docs/screenshots/three_pane_layout.png" alt="Three Pane Layout" width="400">
+
+</td>
+<td width="50%">
+
+**🌙 Dark & Light Themes**
+Full theme support with smooth transitions.
+
+<img src="docs/screenshots/light_theme.png" alt="Light Theme" width="400">
+
+</td>
+</tr>
+</table>
+
 ## Project Structure
 
 ```
@@ -338,6 +396,7 @@ pip install -r requirements.txt
 - [x] Full agent squad — Technical, Sentiment, Social Media, Fundamentals, Devil's Advocate
 - [x] Telegram bot interface
 - [x] ML pipeline — training, inference, backtesting, ensemble predictor, Azure ML
+- [x] Web dashboard — React UI with interactive charts, global events, and AI chat
 - [ ] Alternative data — options flow, insider trading signals
 - [ ] Advanced agents — OptionsAgent, MacroAgent, InsiderAgent
 - [ ] Azure AI Foundry Evaluation integration
