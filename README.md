@@ -18,6 +18,14 @@ StockSquad coordinates a squad of specialized AI agents that each own a distinct
 - **7 Specialized Agents** — Orchestrator, Data, Technical, Sentiment, Social Media, Fundamentals, Devil's Advocate
 - **Dual Memory System** — Short-term session scratchpad + long-term ChromaDB vector store with semantic search
 - **ML Signal Scoring** — Ensemble of XGBoost, Random Forest, and LightGBM models with walk-forward validation
+- **Enhanced ML Pipeline** — Professional-grade model training with:
+  - 🎯 Hyperparameter tuning (Optuna Bayesian optimization)
+  - 📊 Advanced backtest metrics (Sharpe, Sortino, max drawdown, Calmar ratio)
+  - 🔍 Feature drift monitoring (PSI-based automatic retrain triggers)
+  - ✅ Data quality validation (outlier detection, OHLCV validation)
+  - 🛡️ Regression test gates (prevents model degradation)
+  - 📈 Probability calibration (isotonic & Platt scaling)
+  - 🎪 Stacking ensemble & dynamic weighting strategies
 - **Backtesting Engine** — Evaluate model performance on historical data with transaction cost modeling
 - **Telegram Bot** — Trigger full analyses via `/analyze AAPL` from any device
 - **Web Dashboard** — Interactive React dashboard with peer comparison charts, global event overlays, and AI chat
@@ -202,15 +210,21 @@ PYTHONPATH=. python3 ml/backtesting/run_backtest.py \
     --export results.json --export-trades trades.csv
 ```
 
-**Backtest results on AAPL 2024:**
+**Backtest results on AAPL 2024 (with enhanced metrics):**
 
-| Strategy | Win Rate | Accuracy | Profit Factor |
-|---|---|---|---|
-| Ensemble Unanimous | **61.9%** | **69.8%** | **1.92** |
-| XGBoost | 54.5% | 60.3% | 1.41 |
-| Random Forest | 49.3% | 70.4% | 1.25 |
+| Strategy | Win Rate | Sharpe Ratio | Max Drawdown | Profit Factor | Total Return |
+|---|---|---|---|---|---|
+| **XGBoost** (Single Model) | **65.2%** | **1.85** | **-12.46%** | **2.53** | **+55.51%** |
+| Ensemble Unanimous | 63.9% | 1.65 | -14.89% | 2.43 | +43.47% |
+| Ensemble Voting | 51.3% | 1.26 | -30.71% | 1.56 | +46.96% |
+| Ensemble Averaging | 47.9% | 0.54 | -38.87% | 1.22 | +18.09% |
 
-> Transaction costs (0.2% round-trip) are included in all results.
+**Multi-ticker performance (AAPL, MSFT, NVDA, GOOGL, META):**
+- **2024:** 396 trades, 68.9% win rate, 76.8% prediction accuracy, +925.98% total return
+- **2023:** 436 trades, 72.7% win rate, 82.6% prediction accuracy, +1,356.30% total return
+- **2022:** 559 trades, 49.0% win rate, 57.6% prediction accuracy, -48.69% total return
+
+> Transaction costs (0.2% round-trip) are included in all results. XGBoost single model outperforms ensembles in this dataset.
 
 ## Web Dashboard
 

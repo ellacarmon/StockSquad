@@ -3,9 +3,12 @@ Ensemble Predictor - Combines multiple ML models for better predictions.
 Uses voting/averaging to generate more robust signals.
 """
 
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from pathlib import Path
 import numpy as np
+import pandas as pd
+from sklearn.linear_model import LogisticRegression
+from sklearn.model_selection import TimeSeriesSplit
 
 from ml.inference.prediction_engine import PredictionEngine
 
@@ -41,6 +44,13 @@ class EnsemblePredictor:
             'lightgbm': PredictionEngine(models_dir=models_dir, model_type='lightgbm')
         }
         print(f"[EnsemblePredictor] ✓ Loaded 3 models: XGBoost, Random Forest, LightGBM")
+
+        # Stacking meta-learner (fitted via fit_stacking_meta_learner)
+        self._meta_learner: Optional[LogisticRegression] = None
+
+        # Dynamic weighting: rolling accuracy tracker per model
+        # {model_name: [accuracy_values]} — most recent entries used for weighting
+        self._rolling_accuracy: Dict[str, List[float]] = {}
 
     def predict(self, indicators: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -79,6 +89,10 @@ class EnsemblePredictor:
             return self._averaging_strategy(predictions)
         elif self.strategy == "unanimous":
             return self._unanimous_strategy(predictions)
+        elif self.strategy == "stacking":
+            return self._stacking_strategy(predictions)
+        elif self.strategy == "dynamic_weighting":
+            return self._dynamic_weighting_strategy(predictions)
         else:
             raise ValueError(f"Unknown strategy: {self.strategy}")
 
@@ -251,6 +265,173 @@ class EnsemblePredictor:
                 ]),
                 'individual_predictions': predictions
             }
+
+    def fit_stacking_meta_learner(
+        self,
+        X: pd.DataFrame,
+        y: pd.Series,
+        base_models: dict,
+    ) -> None:
+        """
+        Train a Logistic Regression meta-learner on out-of-fold predictions.
+
+        Uses TimeSeriesSplit(n_splits=5) to generate OOF probabilities from each
+        base model, then trains a LogisticRegression on those meta-features.
+
+        Args:
+            X: Feature DataFrame used to generate OOF predictions.
+            y: Binary target series (0/1 direction labels).
+            base_models: Dict mapping model name -> fitted sklearn-compatible classifier
+                         with a predict_proba method.
+        """
+        tscv = TimeSeriesSplit(n_splits=5)
+        n_samples = len(X)
+        model_names = list(base_models.keys())
+
+        # OOF probability matrix: one column per base model
+        oof_probs = np.full((n_samples, len(model_names)), np.nan)
+
+        for fold_idx, (train_idx, val_idx) in enumerate(tscv.split(X)):
+            X_train_fold = X.iloc[train_idx]
+            y_train_fold = y.iloc[train_idx]
+            X_val_fold = X.iloc[val_idx]
+
+            for col_idx, model_name in enumerate(model_names):
+                model = base_models[model_name]
+                model.fit(X_train_fold, y_train_fold)
+                probs = model.predict_proba(X_val_fold)
+                # Use probability of positive class (index 1)
+                oof_probs[val_idx, col_idx] = probs[:, 1]
+
+        # Drop rows where any OOF prediction is missing (first fold train indices)
+        valid_mask = ~np.isnan(oof_probs).any(axis=1)
+        meta_X = oof_probs[valid_mask]
+        meta_y = y.values[valid_mask]
+
+        self._meta_learner = LogisticRegression(max_iter=1000)
+        self._meta_learner.fit(meta_X, meta_y)
+
+    def _stacking_strategy(self, predictions: Dict[str, Dict]) -> Dict[str, Any]:
+        """
+        Stacking strategy: use the fitted meta-learner to combine base model predictions.
+
+        If no meta-learner has been fitted, falls back to averaging.
+        """
+        if self._meta_learner is None:
+            # Graceful fallback — no meta-learner fitted yet
+            result = self._averaging_strategy(predictions)
+            result['model_type'] = 'ensemble_stacking'
+            result['stacking_note'] = 'meta-learner not fitted; used averaging fallback'
+            return result
+
+        model_names = list(predictions.keys())
+        # Build meta-feature vector: one probability per base model
+        meta_features = np.array([
+            [predictions[name]['confidence'] / 100.0 for name in model_names]
+        ])
+
+        # Meta-learner predicts direction probability
+        direction_prob = self._meta_learner.predict_proba(meta_features)[0, 1]  # P(bullish)
+        confidence = round(direction_prob * 100, 1)
+
+        if direction_prob > 0.55:
+            direction = 'bullish'
+        elif direction_prob < 0.45:
+            direction = 'bearish'
+        else:
+            direction = 'neutral'
+
+        avg_expected_return = float(np.mean([p['expected_return'] for p in predictions.values()]))
+        recommendation = self._get_recommendation(direction, confidence, avg_expected_return)
+
+        return {
+            'model_type': 'ensemble_stacking',
+            'direction': direction,
+            'confidence': confidence,
+            'expected_return': round(avg_expected_return, 2),
+            'recommendation': recommendation,
+            'direction_probability': round(direction_prob, 4),
+            'num_models': len(predictions),
+            'individual_predictions': predictions,
+        }
+
+    def update_model_weights(self, model_name: str, recent_accuracy: float) -> None:
+        """
+        Record a recent accuracy observation for a base model.
+
+        Maintains a rolling window of up to 30 entries per model.
+
+        Args:
+            model_name: Name of the base model (e.g. "xgboost").
+            recent_accuracy: Accuracy value in [0, 1] from a recent backtested period.
+        """
+        if model_name not in self._rolling_accuracy:
+            self._rolling_accuracy[model_name] = []
+        self._rolling_accuracy[model_name].append(recent_accuracy)
+        # Keep only the last 30 observations (rolling 30-day window)
+        self._rolling_accuracy[model_name] = self._rolling_accuracy[model_name][-30:]
+
+    def _dynamic_weighting_strategy(self, predictions: Dict[str, Dict]) -> Dict[str, Any]:
+        """
+        Dynamic weighting: weight each base model by its rolling average accuracy.
+
+        Falls back to equal weights when no accuracy history is available.
+        """
+        model_names = list(predictions.keys())
+
+        # Compute weights from rolling accuracy history
+        weights = {}
+        for name in model_names:
+            history = self._rolling_accuracy.get(name, [])
+            weights[name] = float(np.mean(history)) if history else 1.0
+
+        total_weight = sum(weights.values())
+        if total_weight == 0:
+            total_weight = len(model_names)
+            weights = {name: 1.0 for name in model_names}
+
+        # Weighted average of confidence and expected return
+        weighted_confidence = sum(
+            predictions[name]['confidence'] * weights[name]
+            for name in model_names
+        ) / total_weight
+
+        weighted_return = sum(
+            predictions[name]['expected_return'] * weights[name]
+            for name in model_names
+        ) / total_weight
+
+        # Determine direction from weighted confidence signals
+        bullish_weight = sum(
+            weights[name]
+            for name in model_names
+            if predictions[name]['direction'].lower() == 'bullish'
+        )
+        bearish_weight = sum(
+            weights[name]
+            for name in model_names
+            if predictions[name]['direction'].lower() == 'bearish'
+        )
+
+        if bullish_weight > bearish_weight:
+            direction = 'bullish'
+        elif bearish_weight > bullish_weight:
+            direction = 'bearish'
+        else:
+            direction = 'neutral'
+
+        recommendation = self._get_recommendation(direction, weighted_confidence, weighted_return)
+
+        return {
+            'model_type': 'ensemble_dynamic_weighting',
+            'direction': direction,
+            'confidence': round(weighted_confidence, 1),
+            'expected_return': round(weighted_return, 2),
+            'recommendation': recommendation,
+            'model_weights': {name: round(weights[name] / total_weight, 4) for name in model_names},
+            'num_models': len(predictions),
+            'individual_predictions': predictions,
+        }
 
     def _get_recommendation(self, direction: str, confidence: float, expected_return: float) -> str:
         """Generate trading recommendation based on direction and confidence."""

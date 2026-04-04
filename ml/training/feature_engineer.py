@@ -14,14 +14,22 @@ from tools.ta_indicators import TechnicalIndicators
 class FeatureEngineer:
     """Engineers features and labels for ML training."""
 
-    def __init__(self, db_path: str = "ml/training/stock_data.db"):
+    def __init__(self, db_path: str = "ml/training/stock_data.db", outlier_z_threshold: float = 5.0):
         """
         Initialize feature engineer.
 
         Args:
             db_path: Path to SQLite database
+            outlier_z_threshold: Z-score threshold for outlier detection (default 5.0)
         """
         self.db_path = Path(db_path)
+        self.outlier_z_threshold = outlier_z_threshold
+        self.data_quality_stats = {
+            'total_rows': 0,
+            'invalid_ohlcv': 0,
+            'outliers_detected': 0,
+            'rows_excluded': 0
+        }
 
     def calculate_technical_indicators(self, ticker: str) -> bool:
         """
@@ -279,20 +287,385 @@ class FeatureEngineer:
             'labels_success': labels_success
         }
 
+    def add_lag_features(self, df: pd.DataFrame, periods: list[int] = None) -> pd.DataFrame:
+        """
+        Compute lag return features for the given periods.
+
+        The lag return for period n is: (close - close.shift(n)) / close.shift(n)
+        Resulting columns are named return_1d, return_5d, return_10d, return_20d.
+
+        Args:
+            df: DataFrame with a 'close' column (index should be date-ordered)
+            periods: List of lag periods in days. Defaults to [1, 5, 10, 20].
+
+        Returns:
+            DataFrame with lag return columns added in-place (copy returned).
+        """
+        if periods is None:
+            periods = [1, 5, 10, 20]
+
+        df = df.copy()
+        close = df['close']
+
+        for n in periods:
+            shifted = close.shift(n)
+            df[f'return_{n}d'] = (close - shifted) / shifted
+
+        return df
+
+    def add_volatility_features(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Compute volatility features: ATR-14, 20-day realized volatility, and vol regime.
+
+        - atr_14: 14-period rolling mean of True Range.
+          True Range = max(high-low, |high-prev_close|, |low-prev_close|). ATR >= 0.
+        - realized_vol_20d: 20-day rolling std of daily log returns log(close/close.shift(1)).
+          realized_vol >= 0.
+        - vol_regime: Binary (0 or 1). 1 if realized_vol_20d > its 60-day rolling median, else 0.
+
+        Args:
+            df: DataFrame with 'high', 'low', 'close' columns (date-ordered).
+
+        Returns:
+            Copy of df with atr_14, realized_vol_20d, vol_regime columns added.
+        """
+        df = df.copy()
+
+        prev_close = df['close'].shift(1)
+        tr = pd.concat([
+            df['high'] - df['low'],
+            (df['high'] - prev_close).abs(),
+            (df['low'] - prev_close).abs(),
+        ], axis=1).max(axis=1)
+        df['atr_14'] = tr.rolling(window=14, min_periods=14).mean()
+
+        log_returns = np.log(df['close'] / df['close'].shift(1))
+        df['realized_vol_20d'] = log_returns.rolling(window=20, min_periods=20).std()
+
+        rolling_median = df['realized_vol_20d'].rolling(window=60, min_periods=1).median()
+        df['vol_regime'] = (df['realized_vol_20d'] > rolling_median).astype(float)
+        df.loc[df['realized_vol_20d'].isna(), 'vol_regime'] = np.nan
+
+        return df
+
+    def add_relative_strength(self, df: pd.DataFrame, benchmark: str = "SPY") -> pd.DataFrame:
+        """
+        Compute 20-day relative strength of each stock vs a benchmark (default SPY).
+
+        rs_vs_spy_20d = stock_20d_return / spy_20d_return
+        where 20d_return = (close - close.shift(20)) / close.shift(20), grouped by ticker.
+
+        If the benchmark ticker is not present in the DataFrame, rs_vs_spy_20d is filled
+        with NaN and a warning is logged.
+
+        Args:
+            df: Multi-ticker DataFrame with 'ticker', 'date', and 'close' columns.
+
+        Returns:
+            Copy of df with rs_vs_spy_20d column added.
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+
+        df = df.copy()
+
+        # Compute 20-day return for every row, grouped by ticker
+        def _ret20(group):
+            c = group['close']
+            return (c - c.shift(20)) / c.shift(20)
+
+        df['_ret20'] = df.groupby('ticker', group_keys=False)['close'].transform(
+            lambda c: (c - c.shift(20)) / c.shift(20)
+        )
+
+        # Extract SPY 20d returns keyed by date
+        spy_rows = df[df['ticker'] == benchmark]
+        if spy_rows.empty:
+            logger.warning(
+                "[FeatureEngineer] Benchmark '%s' not found in DataFrame; "
+                "rs_vs_spy_20d will be NaN for all rows.",
+                benchmark,
+            )
+            df['rs_vs_spy_20d'] = np.nan
+        else:
+            spy_ret = spy_rows.set_index('date')['_ret20'].rename('_spy_ret20')
+            df = df.join(spy_ret, on='date', how='left')
+            # Avoid division by zero: where spy return is 0, result is NaN
+            spy_zero = df['_spy_ret20'] == 0
+            df['rs_vs_spy_20d'] = df['_ret20'] / df['_spy_ret20']
+            df.loc[spy_zero, 'rs_vs_spy_20d'] = np.nan
+            # Replace inf values (shouldn't occur after zero-guard, but be safe)
+            df['rs_vs_spy_20d'] = df['rs_vs_spy_20d'].replace([np.inf, -np.inf], np.nan)
+            df.drop(columns=['_spy_ret20'], inplace=True)
+
+        df.drop(columns=['_ret20'], inplace=True)
+        return df
+
+    def add_bollinger_features(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Compute Bollinger Band position features: bb_pct_b and bb_width.
+
+        - bb_pct_b: Percent B = (close - bb_lower) / (bb_upper - bb_lower).
+          Represents the position of close within the Bollinger Bands.
+          Set to NaN when bb_upper == bb_lower (zero bandwidth).
+        - bb_width: Band width = (bb_upper - bb_lower) / bb_middle.
+          Normalized width of the bands.
+          Set to NaN when bb_middle == 0.
+
+        Requires columns: close, bb_upper, bb_middle, bb_lower.
+
+        Args:
+            df: DataFrame with bb_upper, bb_middle, bb_lower, and close columns.
+
+        Returns:
+            Copy of df with bb_pct_b and bb_width columns added.
+        """
+        df = df.copy()
+
+        bandwidth = df['bb_upper'] - df['bb_lower']
+
+        # bb_pct_b: NaN where bandwidth is zero
+        bb_pct_b = (df['close'] - df['bb_lower']) / bandwidth
+        bb_pct_b = bb_pct_b.where(bandwidth != 0, other=np.nan)
+        df['bb_pct_b'] = bb_pct_b
+
+        # bb_width: NaN where bb_middle is zero
+        bb_width = bandwidth / df['bb_middle']
+        bb_width = bb_width.where(df['bb_middle'] != 0, other=np.nan)
+        df['bb_width'] = bb_width
+
+        return df
+
+    def add_calendar_features(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Compute calendar features: day_of_week, month, and days_to_earnings.
+
+        - day_of_week: Integer 0-6 (Monday=0, Sunday=6) from the 'date' column.
+        - month: Integer 1-12 from the 'date' column.
+        - days_to_earnings: Days until the next earnings date, approximated as the
+          number of days until the next multiple of 63 trading days from the start
+          of the series, computed per ticker.
+
+        If the 'date' column is not datetime, it is converted first.
+        If no 'date' column exists, all three features are filled with NaN.
+
+        Args:
+            df: DataFrame with a 'date' column and optionally a 'ticker' column.
+
+        Returns:
+            Copy of df with day_of_week, month, and days_to_earnings columns added.
+        """
+        df = df.copy()
+
+        if 'date' not in df.columns:
+            df['day_of_week'] = np.nan
+            df['month'] = np.nan
+            df['days_to_earnings'] = np.nan
+            return df
+
+        # Ensure datetime
+        if not pd.api.types.is_datetime64_any_dtype(df['date']):
+            df['date'] = pd.to_datetime(df['date'])
+
+        df['day_of_week'] = df['date'].dt.dayofweek  # 0=Monday, 6=Sunday
+        df['month'] = df['date'].dt.month             # 1-12
+
+        # days_to_earnings: per-ticker, days until next multiple of 63 from series start
+        earnings_cycle = 63  # approximate quarterly trading days
+
+        def _days_to_earnings(group):
+            positions = np.arange(len(group))
+            # Next multiple of 63 from position 0 (i.e., 63, 126, 189, ...)
+            next_earnings = ((positions // earnings_cycle) + 1) * earnings_cycle
+            return pd.Series(next_earnings - positions, index=group.index)
+
+        if 'ticker' in df.columns:
+            df['days_to_earnings'] = df.groupby('ticker', group_keys=False).apply(
+                _days_to_earnings, include_groups=False
+            )
+        else:
+            df['days_to_earnings'] = _days_to_earnings(df)
+
+        return df
+
+    def select_features(self, X: pd.DataFrame, y: pd.Series, top_n: int = 40) -> pd.DataFrame:
+        """
+        Select the most informative features from X.
+
+        Steps:
+        1. Drop features with >5% missing values (NaN fraction > 0.05).
+        2. Drop features with pairwise absolute Pearson correlation > 0.95
+           (keep the first of each correlated pair).
+        3. Rank remaining features by XGBoost feature importance and keep top `top_n`.
+
+        Fallback: If after steps 1-2 fewer than 10 features remain, skip step 2
+        and instead keep top 20 features by XGBoost importance from the features
+        that passed step 1 only. A warning is logged.
+
+        Args:
+            X: Feature DataFrame (rows = samples, columns = features).
+            y: Target Series aligned with X.
+            top_n: Number of top features to keep (default 40).
+
+        Returns:
+            DataFrame with only the selected feature columns.
+        """
+        import logging
+        import xgboost as xgb
+
+        logger = logging.getLogger(__name__)
+
+        # Step 1: Drop features with >5% missing values
+        missing_frac = X.isnull().mean()
+        passed_missing = missing_frac[missing_frac <= 0.05].index.tolist()
+        X_clean = X[passed_missing]
+
+        # Step 2: Drop highly correlated features (>0.95 absolute Pearson)
+        corr_matrix = X_clean.corr().abs()
+        upper = corr_matrix.where(
+            np.triu(np.ones(corr_matrix.shape), k=1).astype(bool)
+        )
+        to_drop = [col for col in upper.columns if any(upper[col] > 0.95)]
+        X_after_corr = X_clean.drop(columns=to_drop)
+
+        # Fallback: if fewer than 10 features remain after correlation pruning,
+        # skip step 2 and use top 20 from step 1 features only
+        use_fallback = len(X_after_corr.columns) < 10
+        if use_fallback:
+            logger.warning(
+                "[FeatureEngineer] select_features: only %d features remain after "
+                "correlation pruning (< 10). Skipping correlation pruning and "
+                "keeping top 20 features by XGBoost importance from step-1 features.",
+                len(X_after_corr.columns),
+            )
+            X_for_importance = X_clean
+            n_keep = min(20, top_n)
+        else:
+            X_for_importance = X_after_corr
+            n_keep = top_n
+
+        # Step 3: Rank by XGBoost feature importance and keep top n_keep
+        # Fill NaNs with median for XGBoost fitting
+        X_filled = X_for_importance.fillna(X_for_importance.median())
+        clf = xgb.XGBClassifier(
+            n_estimators=100,
+            use_label_encoder=False,
+            eval_metric="logloss",
+            random_state=42,
+            verbosity=0,
+        )
+        clf.fit(X_filled, y)
+
+        importances = pd.Series(clf.feature_importances_, index=X_for_importance.columns)
+        top_features = importances.nlargest(n_keep).index.tolist()
+
+        return X[top_features]
+
+    def validate_data_quality(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Validate data quality and remove invalid/anomalous rows.
+
+        Args:
+            df: DataFrame with OHLCV data
+
+        Returns:
+            Cleaned DataFrame with invalid rows removed
+
+        **Validates: Requirements 10.1, 10.2, 10.3**
+        """
+        if df.empty:
+            return df
+
+        initial_rows = len(df)
+        self.data_quality_stats['total_rows'] = initial_rows
+
+        # Step 1: Validate OHLCV values
+        # Check: high >= low, all OHLCV values > 0
+        ohlcv_valid_mask = (
+            (df['high'] >= df['low']) &
+            (df['open'] > 0) &
+            (df['high'] > 0) &
+            (df['low'] > 0) &
+            (df['close'] > 0) &
+            (df['volume'] > 0)
+        )
+
+        invalid_ohlcv_count = (~ohlcv_valid_mask).sum()
+        if invalid_ohlcv_count > 0:
+            print(f"[FeatureEngineer] Found {invalid_ohlcv_count} rows with invalid OHLCV values (high < low or non-positive values)")
+            self.data_quality_stats['invalid_ohlcv'] = invalid_ohlcv_count
+
+        df = df[ohlcv_valid_mask].copy()
+
+        # Step 2: Detect outliers using z-score on price changes
+        if len(df) > 10:  # Need enough data for meaningful z-score
+            # Calculate daily returns
+            df_sorted = df.sort_values(['ticker', 'date'])
+            df_sorted['price_change'] = df_sorted.groupby('ticker')['close'].pct_change()
+
+            # Calculate z-score for price changes
+            price_changes = df_sorted['price_change'].dropna()
+            if len(price_changes) > 0:
+                mean_change = price_changes.mean()
+                std_change = price_changes.std()
+
+                if std_change > 0:
+                    df_sorted['z_score'] = (df_sorted['price_change'] - mean_change) / std_change
+
+                    # Flag outliers
+                    outlier_mask = df_sorted['z_score'].abs() > self.outlier_z_threshold
+
+                    outlier_count = outlier_mask.sum()
+                    if outlier_count > 0:
+                        print(f"[FeatureEngineer] Detected {outlier_count} outliers (|z-score| > {self.outlier_z_threshold})")
+                        self.data_quality_stats['outliers_detected'] = outlier_count
+
+                        # Log some outlier examples
+                        outliers = df_sorted[outlier_mask][['ticker', 'date', 'close', 'price_change', 'z_score']].head(5)
+                        for _, row in outliers.iterrows():
+                            print(f"  {row['ticker']} on {row['date']}: {row['price_change']*100:.2f}% change (z={row['z_score']:.2f})")
+
+                    # Remove outliers
+                    df = df_sorted[~outlier_mask].drop(columns=['price_change', 'z_score'])
+                else:
+                    df = df_sorted.drop(columns=['price_change'], errors='ignore')
+            else:
+                df = df_sorted.drop(columns=['price_change'], errors='ignore')
+
+        # Calculate total rows excluded
+        final_rows = len(df)
+        rows_excluded = initial_rows - final_rows
+        self.data_quality_stats['rows_excluded'] = rows_excluded
+
+        if rows_excluded > 0:
+            exclusion_pct = (rows_excluded / initial_rows) * 100
+            print(f"[FeatureEngineer] Data quality check: excluded {rows_excluded} / {initial_rows} rows ({exclusion_pct:.1f}%)")
+
+        return df
+
+    def get_data_quality_stats(self) -> dict:
+        """
+        Get data quality statistics from the last validation run.
+
+        Returns:
+            Dictionary with validation statistics
+        """
+        return self.data_quality_stats.copy()
+
     def get_training_data(
         self,
         min_date: Optional[str] = None,
         max_date: Optional[str] = None
     ) -> pd.DataFrame:
         """
-        Get processed training data.
+        Get processed training data with data quality validation.
 
         Args:
             min_date: Minimum date (YYYY-MM-DD)
             max_date: Maximum date (YYYY-MM-DD)
 
         Returns:
-            DataFrame with features and labels
+            DataFrame with features and labels (invalid rows excluded)
         """
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
@@ -368,6 +741,18 @@ class FeatureEngineer:
 
         df = pd.read_sql_query(query, conn, parse_dates=['date'])
         conn.close()
+
+        # Validate data quality before feature engineering
+        if not df.empty:
+            df = self.validate_data_quality(df)
+
+        # Add lag return features to the pipeline output
+        if not df.empty:
+            df = self.add_lag_features(df, periods=[1, 5, 10, 20])
+            df = self.add_volatility_features(df)
+            df = self.add_relative_strength(df)
+            df = self.add_calendar_features(df)
+            df = self.add_bollinger_features(df)
 
         return df
 
