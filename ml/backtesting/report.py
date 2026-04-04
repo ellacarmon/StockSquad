@@ -68,11 +68,45 @@ Worst Trade:            {results['worst_trade']:+.2f}%
 Profit Factor:          {results['profit_factor']}
 
 {'─' * 70}
+RISK-ADJUSTED METRICS
+{'─' * 70}
+Sharpe Ratio:           {results.get('sharpe_ratio', 'N/A')}
+Sortino Ratio:          {results.get('sortino_ratio', 'N/A')}
+Max Drawdown:           {results.get('max_drawdown', 'N/A')}%
+Calmar Ratio:           {results.get('calmar_ratio', 'N/A')}
+
+{'─' * 70}
 ML MODEL PERFORMANCE
 {'─' * 70}
 Prediction Accuracy:    {results['prediction_accuracy']}%
 Avg ML Confidence:      {results['avg_ml_confidence']}%
+"""
 
+        # Add calibration curve if available
+        calibration_curve = results.get('calibration_curve', {})
+        if calibration_curve:
+            report += f"\n{'─' * 70}\nCALIBRATION CURVE\n{'─' * 70}\n"
+            report += "Confidence Bin → Actual Win Rate:\n"
+            for bin_key in sorted(calibration_curve.keys()):
+                bin_data = calibration_curve[bin_key]
+                report += f"  {bin_data['avg_confidence']:.1f}% → {bin_data['actual_win_rate']:.1f}% ({bin_data['count']} trades)\n"
+
+        # Add regime breakdown if available
+        regime_breakdown = results.get('regime_breakdown', {})
+        if regime_breakdown:
+            report += f"\n{'─' * 70}\nREGIME ANALYSIS\n{'─' * 70}\n"
+            if 'trending' in regime_breakdown:
+                trending = regime_breakdown['trending']
+                report += f"Trending Markets:\n"
+                report += f"  Trades: {trending['count']}, Win Rate: {trending['win_rate']}%, "
+                report += f"Avg Return: {trending['avg_return']:+.2f}%, Accuracy: {trending['prediction_accuracy']}%\n"
+            if 'ranging' in regime_breakdown:
+                ranging = regime_breakdown['ranging']
+                report += f"Ranging Markets:\n"
+                report += f"  Trades: {ranging['count']}, Win Rate: {ranging['win_rate']}%, "
+                report += f"Avg Return: {ranging['avg_return']:+.2f}%, Accuracy: {ranging['prediction_accuracy']}%\n"
+
+        report += f"""
 {'─' * 70}
 BENCHMARK COMPARISON
 {'─' * 70}

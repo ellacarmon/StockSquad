@@ -13,6 +13,7 @@ from ml.inference.prediction_engine import PredictionEngine
 from ml.inference.ensemble_predictor import EnsemblePredictor
 from ml.training.data_collector import HistoricalDataCollector
 from tools.ta_indicators import TechnicalIndicators
+from ml.backtesting.metrics import BacktestMetrics
 
 
 class SimpleBacktester:
@@ -325,6 +326,41 @@ class SimpleBacktester:
             'profitable': net_return_pct > 0
         }
 
+    def _build_equity_curve(self, trades: List[Dict[str, Any]], start_date: str, end_date: str) -> pd.Series:
+        """
+        Build an equity curve from trade results.
+
+        Args:
+            trades: List of trade dictionaries
+            start_date: Start date for equity curve
+            end_date: End date for equity curve
+
+        Returns:
+            Series indexed by date with cumulative portfolio value (starting at 100)
+        """
+        if not trades:
+            # Return a flat line at 100
+            dates = pd.date_range(start_date, end_date, freq='D')
+            return pd.Series(100.0, index=dates)
+
+        # Create a DataFrame with all trade dates
+        trade_df = pd.DataFrame(trades)
+        trade_df['exit_date'] = pd.to_datetime(trade_df['exit_date'])
+
+        # Build daily equity curve
+        date_range = pd.date_range(start_date, end_date, freq='D')
+        equity = pd.Series(100.0, index=date_range)
+
+        # Apply returns on exit dates
+        for _, trade in trade_df.iterrows():
+            exit_date = trade['exit_date']
+            if exit_date in equity.index:
+                # Apply percentage return to current equity
+                return_multiplier = 1 + (trade['net_return_pct'] / 100)
+                equity.loc[exit_date:] *= return_multiplier
+
+        return equity
+
     def _calculate_metrics(
         self,
         ticker: str,
@@ -375,6 +411,22 @@ class SimpleBacktester:
         # Buy and hold comparison
         buy_hold_return = self._calculate_buy_hold_return(price_data, start_date, end_date)
 
+        # --- Enhanced Metrics (Task 8) ---
+        # Build equity curve for portfolio-level metrics
+        equity_curve = self._build_equity_curve(trades, start_date, end_date)
+
+        # Calculate enhanced metrics
+        sharpe_ratio = BacktestMetrics.calculate_sharpe_ratio_annualized(equity_curve)
+        sortino_ratio = BacktestMetrics.calculate_sortino_ratio(equity_curve)
+        max_drawdown = BacktestMetrics.calculate_max_drawdown(equity_curve)
+        calmar_ratio = BacktestMetrics.calculate_calmar_ratio(equity_curve)
+
+        # Calibration curve
+        calibration_curve = BacktestMetrics.calculate_calibration_curve(trades)
+
+        # Regime analysis
+        regime_breakdown = BacktestMetrics.analyze_by_regime(trades, price_data)
+
         return {
             'ticker': ticker,
             'period': f"{start_date} to {end_date}",
@@ -394,6 +446,13 @@ class SimpleBacktester:
             'prediction_accuracy': round(prediction_accuracy, 1),
             'avg_ml_confidence': round(avg_confidence, 1),
             'buy_hold_return': round(buy_hold_return, 2),
+            # Enhanced metrics
+            'sharpe_ratio': round(sharpe_ratio, 2),
+            'sortino_ratio': round(sortino_ratio, 2),
+            'max_drawdown': round(max_drawdown, 2),
+            'calmar_ratio': round(calmar_ratio, 2),
+            'calibration_curve': calibration_curve,
+            'regime_breakdown': regime_breakdown,
             'trades': trades
         }
 
