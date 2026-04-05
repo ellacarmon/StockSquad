@@ -12,23 +12,16 @@ mkdir -p /mnt/chromadb
 chmod 755 /mnt/chromadb
 
 # Display environment info
-echo "Python version: $(python3 --version 2>/dev/null || echo 'Python not found')"
+echo "Python version: $(python --version 2>/dev/null || python3 --version 2>/dev/null || echo 'Python not found')"
 echo "Node version: $(node --version 2>/dev/null || echo 'Node not found')"
 echo "Working directory: $(pwd)"
 echo "ChromaDB path: ${CHROMA_DB_PATH:-/mnt/chromadb}"
 
-# Install Python dependencies if needed
-if [ ! -d "venv" ]; then
-    echo "Creating virtual environment..."
-    python3 -m venv venv
-fi
-
-echo "Activating virtual environment..."
-source venv/bin/activate
-
+# Azure App Service provides Python environment, no need for venv
+# Just install dependencies directly
 echo "Installing Python dependencies..."
-pip install --upgrade pip
-pip install -r requirements.txt
+python -m pip install --upgrade pip
+python -m pip install -r requirements.txt
 
 # Frontend is built in GitHub Actions, so we skip it here
 echo "Frontend build handled by GitHub Actions, skipping..."
@@ -36,7 +29,7 @@ echo "Frontend build handled by GitHub Actions, skipping..."
 # Start Telegram bot in background (if token is configured)
 if [ -n "$TELEGRAM_BOT_TOKEN" ]; then
     echo "Starting Telegram bot in background..."
-    python3 main_bot.py &
+    python main_bot.py &
     BOT_PID=$!
     echo "Telegram bot started with PID: $BOT_PID"
 else
@@ -49,7 +42,7 @@ echo "Listening on 0.0.0.0:8000"
 echo "========================================="
 
 # Use gunicorn for production (better than uvicorn for App Service)
-pip install gunicorn uvicorn[standard]
+python -m pip install gunicorn uvicorn[standard]
 
 # Start with gunicorn
 exec gunicorn ui.api:app \

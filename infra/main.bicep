@@ -224,6 +224,7 @@ resource appService 'Microsoft.Web/sites@2023-01-01' = {
       ftpsState: 'Disabled'
       minTlsVersion: '1.2'
       healthCheckPath: '/api/reports'
+      appCommandLine: 'bash startup.sh'
       appSettings: allAppSettings
       azureStorageAccounts: {
         chromadb: {
