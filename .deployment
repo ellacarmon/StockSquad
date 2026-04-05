@@ -1,5 +1,3 @@
 [config]
-SCM_DO_BUILD_DURING_DEPLOYMENT=true
-ENABLE_ORYX_BUILD=true
-POST_BUILD_COMMAND=cd ui/web && npm install && npm run build
+SCM_DO_BUILD_DURING_DEPLOYMENT=false
 command = bash startup.sh

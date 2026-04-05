@@ -61,15 +61,7 @@ var logAnalyticsName = '${appName}-logs-${environment}-${uniqueSuffix}'
 var baseAppSettings = [
   {
     name: 'SCM_DO_BUILD_DURING_DEPLOYMENT'
-    value: 'true'
-  }
-  {
-    name: 'ENABLE_ORYX_BUILD'
-    value: 'true'
-  }
-  {
-    name: 'POST_BUILD_COMMAND'
-    value: 'cd ui/web && npm install && npm run build'
+    value: 'false'
   }
   {
     name: 'WEBSITE_HTTPLOGGING_RETENTION_DAYS'

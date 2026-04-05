@@ -12,7 +12,7 @@ mkdir -p /mnt/chromadb
 chmod 755 /mnt/chromadb
 
 # Display environment info
-echo "Python version: $(python --version)"
+echo "Python version: $(python3 --version 2>/dev/null || echo 'Python not found')"
 echo "Node version: $(node --version 2>/dev/null || echo 'Node not found')"
 echo "Working directory: $(pwd)"
 echo "ChromaDB path: ${CHROMA_DB_PATH:-/mnt/chromadb}"
@@ -20,7 +20,7 @@ echo "ChromaDB path: ${CHROMA_DB_PATH:-/mnt/chromadb}"
 # Install Python dependencies if needed
 if [ ! -d "venv" ]; then
     echo "Creating virtual environment..."
-    python -m venv venv
+    python3 -m venv venv
 fi
 
 echo "Activating virtual environment..."
@@ -30,25 +30,13 @@ echo "Installing Python dependencies..."
 pip install --upgrade pip
 pip install -r requirements.txt
 
-# Build frontend if not already built
-if [ ! -d "ui/web/dist" ]; then
-    echo "Building React frontend..."
-    if [ -d "ui/web" ]; then
-        cd ui/web
-        npm install
-        npm run build
-        cd ../..
-    else
-        echo "Warning: ui/web directory not found, skipping frontend build"
-    fi
-else
-    echo "Frontend already built, skipping..."
-fi
+# Frontend is built in GitHub Actions, so we skip it here
+echo "Frontend build handled by GitHub Actions, skipping..."
 
 # Start Telegram bot in background (if token is configured)
 if [ -n "$TELEGRAM_BOT_TOKEN" ]; then
     echo "Starting Telegram bot in background..."
-    python main_bot.py &
+    python3 main_bot.py &
     BOT_PID=$!
     echo "Telegram bot started with PID: $BOT_PID"
 else
