@@ -61,7 +61,7 @@ var logAnalyticsName = '${appName}-logs-${environment}-${uniqueSuffix}'
 var baseAppSettings = [
   {
     name: 'SCM_DO_BUILD_DURING_DEPLOYMENT'
-    value: 'false'
+    value: 'true'
   }
   {
     name: 'WEBSITE_HTTPLOGGING_RETENTION_DAYS'
@@ -224,7 +224,7 @@ resource appService 'Microsoft.Web/sites@2023-01-01' = {
       ftpsState: 'Disabled'
       minTlsVersion: '1.2'
       healthCheckPath: '/api/reports'
-      appCommandLine: 'bash startup.sh'
+      appCommandLine: 'bash /home/site/wwwroot/startup.sh'
       appSettings: allAppSettings
       azureStorageAccounts: {
         chromadb: {

@@ -37,11 +37,8 @@ jobs:
         npm run build
         cd ../..
 
-    # Install Python dependencies
-    - name: Install Python dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
+    # Python dependencies will be installed by Oryx during deployment
+    # No need to install them here - this reduces deployment package size
 
     # Run tests (optional - uncomment when you have tests)
     # - name: Run Python tests
@@ -59,6 +56,9 @@ jobs:
         rm -f ui/web/*.config.js ui/web/*.config.ts ui/web/eslint.config.js
         rm -f ui/web/index.html ui/web/vite.config.ts ui/web/tsconfig.json
 
+        # Ensure startup.sh has execute permissions
+        chmod +x startup.sh
+
         # Create a zip with necessary files
         zip -r deploy.zip . \
           -x "*.git*" \
@@ -67,7 +67,15 @@ jobs:
           -x "*node_modules*" \
           -x "*.env*" \
           -x "*chroma_db*" \
-          -x "*.DS_Store*"
+          -x "*.DS_Store*" \
+          -x "*.venv/*" \
+          -x "*venv/*" \
+          -x "*.hypothesis/*"
+
+        # Verify startup.sh is in the package
+        echo "Verifying deployment package contents..."
+        unzip -l deploy.zip | grep startup.sh || (echo "ERROR: startup.sh not found in deployment package!" && exit 1)
+        echo "Package size: $(du -h deploy.zip | cut -f1)"
 
     # Login to Azure
     - name: Azure Login
