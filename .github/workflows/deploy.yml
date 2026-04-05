@@ -52,8 +52,12 @@ jobs:
     # Create deployment package
     - name: Create deployment artifact
       run: |
-        # Remove dev dependencies and node_modules to reduce size
+        # Remove frontend source files - keep only the built dist folder
         rm -rf ui/web/node_modules
+        rm -rf ui/web/src
+        rm -f ui/web/package.json ui/web/package-lock.json
+        rm -f ui/web/*.config.js ui/web/*.config.ts ui/web/eslint.config.js
+        rm -f ui/web/index.html ui/web/vite.config.ts ui/web/tsconfig.json
 
         # Create a zip with necessary files
         zip -r deploy.zip . \
