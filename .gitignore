@@ -40,6 +40,12 @@ ENV/
 # Jupyter Notebook
 .ipynb_checkpoints
 
+# Testing
+.pytest_cache/
+.hypothesis/
+.coverage
+htmlcov/
+
 # Data
 *.csv
 *.db
@@ -62,6 +68,13 @@ Thumbs.db
 
 # Azure
 .azure/
+deploy.zip
+
+# Frontend (React/Node.js)
+ui/web/node_modules/
+ui/web/dist/
+ui/web/.vite/
+ui/web/build/
 
 # ML Models (Keep metadata, exclude large binary files)
 *.pkl

@@ -1,0 +1,36 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "appName": {
+      "value": "stocksquad"
+    },
+    "environment": {
+      "value": "prod"
+    },
+    "appServiceSku": {
+      "value": "B1"
+    },
+    "azureOpenAiEndpoint": {
+      "value": "YOUR_AZURE_OPENAI_ENDPOINT"
+    },
+    "azureOpenAiApiKey": {
+      "value": "YOUR_AZURE_OPENAI_API_KEY"
+    },
+    "azureOpenAiDeploymentName": {
+      "value": "gpt-4o"
+    },
+    "azureOpenAiEmbeddingDeploymentName": {
+      "value": "text-embedding-ada-002"
+    },
+    "telegramBotToken": {
+      "value": ""
+    },
+    "xaiApiKey": {
+      "value": ""
+    },
+    "alphaVantageApiKey": {
+      "value": ""
+    }
+  }
+}

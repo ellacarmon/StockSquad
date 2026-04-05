@@ -1,0 +1,132 @@
+name: Deploy StockSquad to Azure
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:  # Allow manual trigger
+
+env:
+  AZURE_WEBAPP_PACKAGE_PATH: '.'
+  PYTHON_VERSION: '3.11'
+  NODE_VERSION: '18.x'
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python ${{ env.PYTHON_VERSION }}
+      uses: actions/setup-python@v5
+      with:
+        python-version: ${{ env.PYTHON_VERSION }}
+
+    - name: Set up Node.js ${{ env.NODE_VERSION }}
+      uses: actions/setup-node@v4
+      with:
+        node-version: ${{ env.NODE_VERSION }}
+
+    # Build Frontend
+    - name: Build React frontend
+      run: |
+        cd ui/web
+        npm ci
+        npm run build
+        cd ../..
+
+    # Install Python dependencies
+    - name: Install Python dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    # Run tests (optional - uncomment when you have tests)
+    # - name: Run Python tests
+    #   run: |
+    #     pip install pytest pytest-asyncio
+    #     pytest
+
+    # Create deployment package
+    - name: Create deployment artifact
+      run: |
+        # Remove dev dependencies and node_modules to reduce size
+        rm -rf ui/web/node_modules
+
+        # Create a zip with necessary files
+        zip -r deploy.zip . \
+          -x "*.git*" \
+          -x "*__pycache__*" \
+          -x "*.pytest_cache*" \
+          -x "*node_modules*" \
+          -x "*.env*" \
+          -x "*chroma_db*" \
+          -x "*.DS_Store*"
+
+    # Login to Azure
+    - name: Azure Login
+      uses: azure/login@v1
+      with:
+        creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+    # Deploy Infrastructure (only runs if Bicep files changed or first deploy)
+    - name: Deploy Azure Infrastructure
+      if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[deploy-infra]')
+      uses: azure/arm-deploy@v1
+      with:
+        subscriptionId: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        resourceGroupName: ${{ secrets.AZURE_RESOURCE_GROUP }}
+        template: ./infra/main.bicep
+        parameters: >
+          azureOpenAiEndpoint=${{ secrets.AZURE_OPENAI_ENDPOINT }}
+          azureOpenAiApiKey=${{ secrets.AZURE_OPENAI_API_KEY }}
+          azureOpenAiDeploymentName=${{ secrets.AZURE_OPENAI_DEPLOYMENT_NAME }}
+          azureOpenAiEmbeddingDeploymentName=${{ secrets.AZURE_OPENAI_EMBEDDING_DEPLOYMENT_NAME }}
+          telegramBotToken=${{ secrets.TELEGRAM_BOT_TOKEN }}
+          xaiApiKey=${{ secrets.XAI_API_KEY }}
+          alphaVantageApiKey=${{ secrets.ALPHA_VANTAGE_API_KEY }}
+          environment=prod
+          appServiceSku=B1
+
+    # Deploy Application to App Service
+    - name: Deploy to Azure Web App
+      uses: azure/webapps-deploy@v2
+      with:
+        app-name: ${{ secrets.AZURE_WEBAPP_NAME }}
+        package: deploy.zip
+
+    # Restart App Service to ensure startup script runs
+    - name: Restart App Service
+      run: |
+        az webapp restart \
+          --name ${{ secrets.AZURE_WEBAPP_NAME }} \
+          --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }}
+
+    # Health check
+    - name: Health Check
+      run: |
+        echo "Waiting 30s for app to start..."
+        sleep 30
+
+        WEBAPP_URL="https://${{ secrets.AZURE_WEBAPP_NAME }}.azurewebsites.net"
+        echo "Checking health at $WEBAPP_URL/api/reports"
+
+        STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$WEBAPP_URL/api/reports" || echo "000")
+
+        if [ "$STATUS" = "200" ] || [ "$STATUS" = "401" ]; then
+          echo "✅ Health check passed (HTTP $STATUS)"
+        else
+          echo "⚠️  Health check returned HTTP $STATUS (may still be starting up)"
+          exit 0  # Don't fail deployment, just warn
+        fi
+
+    - name: Deployment Summary
+      run: |
+        echo "========================================="
+        echo "🚀 Deployment Complete!"
+        echo "========================================="
+        echo "App URL: https://${{ secrets.AZURE_WEBAPP_NAME }}.azurewebsites.net"
+        echo "Resource Group: ${{ secrets.AZURE_RESOURCE_GROUP }}"
+        echo "========================================="
