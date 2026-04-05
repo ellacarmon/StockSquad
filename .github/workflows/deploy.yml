@@ -99,15 +99,19 @@ jobs:
 
     # Restart App Service to ensure startup script runs
     - name: Restart App Service
-      if: secrets.AZURE_RESOURCE_GROUP != ''
+      continue-on-error: true
       run: |
-        az webapp restart \
-          --name ${{ secrets.AZURE_WEBAPP_NAME }} \
-          --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }}
+        if [ -n "${{ secrets.AZURE_RESOURCE_GROUP }}" ] && [ -n "${{ secrets.AZURE_WEBAPP_NAME }}" ]; then
+          az webapp restart \
+            --name ${{ secrets.AZURE_WEBAPP_NAME }} \
+            --resource-group ${{ secrets.AZURE_RESOURCE_GROUP }}
+        else
+          echo "Skipping restart - Azure secrets not configured"
+        fi
 
     # Health check
     - name: Health Check
-      if: secrets.AZURE_WEBAPP_NAME != ''
+      continue-on-error: true
       run: |
         echo "Waiting 30s for app to start..."
         sleep 30
