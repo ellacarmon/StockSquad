@@ -1,22 +1,23 @@
 """
 TechnicalAgent: Performs technical analysis with indicators and ML signal scoring.
 Analyzes price patterns, momentum, and generates trading signals.
+
+Refactored to use the skills system.
 """
 
 from typing import Dict, Any, Optional
-import json
 import pandas as pd
 
 from openai import AzureOpenAI
 from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 
 from config import get_settings
-from tools.ta_indicators import TechnicalIndicators
-from ml.signal_model import SignalScorer
+from agents.base import BaseAgent
 from memory.short_term import ShortTermMemory
+from hooks.event_bus import EventBus, AgentEvent
 
 
-class TechnicalAgent:
+class TechnicalAgent(BaseAgent):
     """
     Agent responsible for technical analysis and signal generation.
 
@@ -25,9 +26,16 @@ class TechnicalAgent:
     - Generates ML-based signal scores
     - Identifies trends and patterns
     - Provides trading recommendations
+
+    Uses skills: technical_indicators, ml_signals
     """
 
-    AGENT_NAME = "TechnicalAgent"
+    # BaseAgent attributes
+    agent_name = "TechnicalAgent"
+    agent_description = "Performs technical analysis with indicators and ML signal scoring"
+    required_skills = ['technical_indicators', 'ml_signals']
+    optional_skills = []
+
     AGENT_INSTRUCTIONS = """You are the TechnicalAgent for StockSquad, specializing in technical analysis.
 
 Your responsibilities:
@@ -65,10 +73,11 @@ Always base your analysis on the data. Be objective and highlight both bullish a
             memory: Optional short-term memory instance
             model_type: ML model type to use for signal scoring (e.g. 'xgboost', 'ensemble_unanimous')
         """
+        # Initialize BaseAgent (loads skills)
+        super().__init__(memory=memory, model_type=model_type)
+
         self.settings = get_settings()
-        self.memory = memory
-        self.ta_calculator = TechnicalIndicators()
-        self.signal_scorer = SignalScorer(model_type=model_type)
+        self.model_type = model_type
 
         # Initialize Azure OpenAI Client
         self.client = self._initialize_client()
@@ -92,10 +101,31 @@ Always base your analysis on the data. Be objective and highlight both bullish a
         if self.assistant is None:
             self.assistant = self.client.beta.assistants.create(
                 model=self.settings.azure_openai_deployment_name,
-                name=self.AGENT_NAME,
+                name=self.agent_name,
                 instructions=self.AGENT_INSTRUCTIONS,
             )
         return self.assistant
+
+    def analyze(self, ticker: str, **kwargs) -> Dict[str, Any]:
+        """
+        Main analysis method required by BaseAgent.
+
+        This is a wrapper around analyze_technicals for BaseAgent compatibility.
+
+        Args:
+            ticker: Stock ticker
+            **kwargs: Additional parameters (price_data, sentiment_result)
+
+        Returns:
+            Dictionary with technical analysis results
+        """
+        price_data = kwargs.get('price_data')
+        sentiment_result = kwargs.get('sentiment_result')
+
+        if price_data is None:
+            raise ValueError("price_data is required for technical analysis")
+
+        return self.analyze_technicals(ticker, price_data, sentiment_result)
 
     def analyze_technicals(
         self,
@@ -114,32 +144,49 @@ Always base your analysis on the data. Be objective and highlight both bullish a
         Returns:
             Dictionary with technical analysis results
         """
-        print(f"[{self.AGENT_NAME}] Calculating technical indicators for {ticker}...")
+        self.log_analysis_start(ticker)
 
-        # Calculate all technical indicators
-        indicators = self.ta_calculator.calculate_all_indicators(price_data)
+        print(f"[{self.agent_name}] Calculating technical indicators for {ticker}...")
 
-        # Generate ML signal score
-        signal_score = self.signal_scorer.score_signal(indicators, sentiment_result=sentiment_result)
+        # Use skills instead of hardcoded tools
+        # Calculate all technical indicators using the skill
+        indicators = self.skills.technical_indicators.calculate_all_indicators(price_data)
+
+        # Generate ML signal score using the skill
+        signal_score = self.skills.ml_signals.score_signal(indicators, sentiment_result=sentiment_result)
 
         # Format for display
-        ta_formatted = self.ta_calculator.format_for_llm(indicators)
-        signal_formatted = self.signal_scorer.format_for_llm(signal_score)
+        ta_formatted = self.skills.technical_indicators.format_for_llm(indicators)
+        signal_formatted = self.skills.ml_signals.format_for_llm(signal_score)
 
         # Store in memory
         if self.memory:
             self.memory.post_to_scratchpad(
                 key=f"{ticker}_technical_indicators",
                 value=indicators,
-                agent=self.AGENT_NAME
+                agent=self.agent_name
             )
             self.memory.post_to_scratchpad(
                 key=f"{ticker}_signal_score",
                 value=signal_score,
-                agent=self.AGENT_NAME
+                agent=self.agent_name
             )
 
-        print(f"[{self.AGENT_NAME}] Technical analysis complete")
+        print(f"[{self.agent_name}] Technical analysis complete")
+
+        # Publish event: signal generated
+        if signal_score.get('confidence', 0) > 50:  # Only publish strong signals
+            EventBus.publish(
+                AgentEvent.SIGNAL_GENERATED,
+                source_agent=self.agent_name,
+                ticker=ticker,
+                data={
+                    'signal': signal_score['recommendation'],
+                    'direction': signal_score['direction'],
+                    'confidence': signal_score['confidence'],
+                    'score': signal_score['signal_score']
+                }
+            )
 
         # Generate report using assistant
         assistant = self.create_assistant()
@@ -184,7 +231,9 @@ Be specific, objective, and actionable."""
                 timeout=180  # 3 minutes max
             )
         except AssistantTimeoutError as e:
-            print(f"[{self.AGENT_NAME}] Timeout: {e}")
+            error_msg = f"Timeout: {e}"
+            print(f"[{self.agent_name}] {error_msg}")
+            self.log_error(ticker, e)
             return None
 
         # Get response
@@ -202,14 +251,24 @@ Be specific, objective, and actionable."""
         # Add to memory
         if self.memory:
             self.memory.add_message(
-                agent=self.AGENT_NAME,
+                agent=self.agent_name,
                 role="assistant",
                 content=report,
                 metadata={"ticker": ticker, "type": "technical_analysis"}
             )
 
+        # Publish completion event
+        EventBus.publish(
+            AgentEvent.ANALYSIS_COMPLETE,
+            source_agent=self.agent_name,
+            ticker=ticker,
+            data={'indicators': indicators, 'signal_score': signal_score}
+        )
+
+        self.log_analysis_complete(ticker, f"Signal: {signal_score['recommendation']}")
+
         return {
-            "agent": self.AGENT_NAME,
+            "agent": self.agent_name,
             "ticker": ticker,
             "indicators": indicators,
             "signal_score": signal_score,

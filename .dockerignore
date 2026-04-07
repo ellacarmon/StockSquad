@@ -1,0 +1,84 @@
+# Git
+.git
+.gitignore
+.github
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info
+.venv
+venv
+env
+ENV
+
+# Testing
+.pytest_cache
+.hypothesis
+.coverage
+htmlcov
+
+# Data
+*.db
+*.sqlite
+*.sqlite3
+chroma_db
+*.csv
+*.parquet
+
+# Logs
+*.log
+logs
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# Build artifacts
+dist
+build
+*.egg
+deploy.zip
+
+# Documentation
+*.md
+!README.md
+docs/screenshots
+
+# ML Models (large binaries)
+ml/models/*.joblib
+ml/models/*.h5
+ml/models/*.pt
+ml/training/*.db
+ml/training/*.sqlite
+ml/backtesting/results/*.json
+ml/backtesting/results/*.csv
+
+# Azure
+.azure
+.deployment
+
+# Secrets
+.env
+.env.local
+*.key
+*.pem
+secrets
+credentials.json
+
+# Telegram
+telegram_bot/user_sessions
+telegram_bot/*.session
+
+# Frontend source (we build in Docker)
+ui/web/node_modules
+ui/web/dist

@@ -6,7 +6,8 @@ import queue
 import asyncio
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Body
+from typing import Optional
+from fastapi import FastAPI, HTTPException, Body, Depends, Header, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import StreamingResponse
@@ -15,6 +16,9 @@ from pydantic import BaseModel
 from memory.long_term import LongTermMemory
 from agents.orchestrator import OrchestratorAgent
 from agents.chat_agent import ChatAgent
+from ui.auth import require_create_permission, require_delete_permission, get_current_user
+from ui.email_service import email_service, generate_verification_code, store_verification_code, verify_code
+from ui.jwt_service import jwt_service
 
 # Define a Thread-Safe stdout interceptor
 class ThreadSafeStdout:
@@ -53,6 +57,28 @@ memory = None
 
 # Store chat sessions (in production, use proper session management)
 chat_sessions = {}
+
+
+# Request/Response models for authentication
+class SendCodeRequest(BaseModel):
+    email: str
+
+
+class SendCodeResponse(BaseModel):
+    success: bool
+    message: str
+
+
+class VerifyCodeRequest(BaseModel):
+    email: str
+    code: str
+
+
+class VerifyCodeResponse(BaseModel):
+    success: bool
+    token: str | None = None
+    email: str | None = None
+    message: str
 
 
 # Request/Response models for chat
@@ -94,8 +120,106 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.get("/api/health")
+async def health_check():
+    """Health check endpoint - no authentication required."""
+    return {"status": "healthy", "service": "StockSquad API"}
+
+
+@app.post("/api/auth/send-code", response_model=SendCodeResponse)
+async def send_verification_code(request: SendCodeRequest):
+    """
+    Send a verification code to the user's email.
+
+    This is step 1 of the login process.
+    """
+    try:
+        email = request.email.lower().strip()
+
+        # Validate email format
+        if "@" not in email or "." not in email:
+            raise HTTPException(status_code=400, detail="Invalid email format")
+
+        # Generate and store verification code
+        code = generate_verification_code()
+        store_verification_code(email, code, expires_in_minutes=10)
+
+        # Send email
+        sent = await email_service.send_verification_code(email, code)
+
+        if not sent:
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to send verification email. Please try again."
+            )
+
+        return SendCodeResponse(
+            success=True,
+            message=f"Verification code sent to {email}. Check your inbox!"
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error sending verification code: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@app.post("/api/auth/verify-code", response_model=VerifyCodeResponse)
+async def verify_verification_code(request: VerifyCodeRequest):
+    """
+    Verify the code and return a JWT token.
+
+    This is step 2 of the login process.
+    """
+    try:
+        email = request.email.lower().strip()
+        code = request.code.strip()
+
+        # Check magic code for development
+        is_magic_code = code == "123456" and os.getenv("SKIP_AUTH", "false").lower() == "true"
+
+        # Verify the code (skip if magic code is used in dev mode)
+        if not is_magic_code and not verify_code(email, code):
+            raise HTTPException(
+                status_code=401,
+                detail="Invalid or expired verification code"
+            )
+
+        # Check if user is authorized in Permit.io
+        from ui.auth import permit_auth
+        
+        # Skip permit check if SKIP_AUTH is enabled
+        if os.getenv("SKIP_AUTH", "false").lower() == "true":
+            is_authorized = True
+        else:
+            is_authorized = await permit_auth.check_permission(email, "read", "analysis")
+
+        if not is_authorized:
+            raise HTTPException(
+                status_code=403,
+                detail=f"Email {email} is not authorized. Contact your administrator to get access."
+            )
+
+        # Create JWT token
+        token = jwt_service.create_access_token(email)
+
+        return VerifyCodeResponse(
+            success=True,
+            token=token,
+            email=email,
+            message="Login successful!"
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Error verifying code: {e}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
 @app.get("/api/reports")
-async def get_reports():
+async def get_reports(user_id: str = Depends(get_current_user)):
     if not memory:
         raise HTTPException(status_code=500, detail="Memory not initialized")
     try:
@@ -129,7 +253,7 @@ def _sanitize_floats(obj):
     return obj
 
 @app.get("/api/reports/{doc_id}")
-async def get_report_detail(doc_id: str):
+async def get_report_detail(doc_id: str, user_id: str = Depends(get_current_user)):
     if not memory:
         raise HTTPException(status_code=500, detail="Memory not initialized")
     try:
@@ -141,7 +265,7 @@ async def get_report_detail(doc_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/reports/{doc_id}/date-insights")
-async def get_date_insights(doc_id: str, date: str):
+async def get_date_insights(doc_id: str, date: str, user_id: str = Depends(get_current_user)):
     """
     Get insights for a specific date in the analysis.
 
@@ -296,11 +420,51 @@ def _generate_date_summary(ticker: str, date: str, day_change_pct: float, volume
     return summary
 
 @app.get("/api/analyze/stream")
-async def analyze_stream(ticker: str, period: str = "1y"):
+async def analyze_stream(
+    ticker: str,
+    period: str = "1y",
+    token: str = None,  # Accept JWT token from query param for EventSource compatibility
+    authorization: Optional[str] = Header(None),
+    x_user_id: Optional[str] = Header(None, alias="X-User-Id")
+):
     """
     Kicks off an analysis and streams the 'print' stdout logs as Server-Sent Events,
     ending with the final document id and result.
+
+    Note: EventSource doesn't support custom headers, so token can be passed as query parameter.
     """
+    # Get user_id from token (query param), Authorization header, or X-User-Id header
+    user_id = None
+
+    # Try query parameter token first (for EventSource)
+    if token:
+        user_id = jwt_service.verify_token(token)
+        if not user_id:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid or expired token"
+            )
+    # Try Authorization header
+    elif authorization and authorization.startswith("Bearer "):
+        token_from_header = authorization.replace("Bearer ", "")
+        user_id = jwt_service.verify_token(token_from_header)
+        if not user_id:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid or expired token"
+            )
+    # Fall back to X-User-Id header
+    elif x_user_id:
+        user_id = x_user_id
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required. Provide token query parameter or Authorization header."
+        )
+
+    # Check permissions
+    from ui.auth import permit_auth
+    await permit_auth.require_permission(user_id, "create", "analysis")
     def execution_generator():
         log_queue = queue.Queue()
         # Create a thread to run the orchestrator
@@ -352,7 +516,10 @@ async def analyze_stream(ticker: str, period: str = "1y"):
 
 
 @app.post("/api/chat", response_model=ChatResponse)
-async def chat_endpoint(request: ChatRequest):
+async def chat_endpoint(
+    request: ChatRequest,
+    user_id: str = Depends(require_create_permission)
+):
     """
     Chat with the ChatAgent about analysis reports.
 
@@ -394,7 +561,10 @@ async def chat_endpoint(request: ChatRequest):
 
 
 @app.delete("/api/chat/{session_id}")
-async def clear_chat_session(session_id: str):
+async def clear_chat_session(
+    session_id: str,
+    user_id: str = Depends(require_delete_permission)
+):
     """Clear a chat session and clean up resources."""
     if session_id in chat_sessions:
         try:

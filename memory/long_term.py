@@ -16,6 +16,7 @@ from openai import AzureOpenAI
 from azure.identity import DefaultAzureCredential, get_bearer_token_provider
 
 from config import get_settings
+from memory.blob_backup import BlobBackupManager
 
 
 class CustomJSONEncoder(json.JSONEncoder):
@@ -47,9 +48,11 @@ class LongTermMemory:
 
     def __init__(self):
         """Initialize long-term memory with ChromaDB and Azure OpenAI embeddings."""
+        print("  [1/4] Loading settings...")
         self.settings = get_settings()
 
         # Initialize ChromaDB client
+        print(f"  [2/4] Initializing ChromaDB at {self.settings.chroma_db_path}...")
         self.chroma_client = chromadb.PersistentClient(
             path=str(self.settings.chroma_db_path),
             settings=ChromaSettings(
@@ -59,21 +62,46 @@ class LongTermMemory:
         )
 
         # Get or create collection for stock analyses
+        print("  [3/4] Getting/creating collection 'stock_analyses'...")
         self.collection = self.chroma_client.get_or_create_collection(
             name="stock_analyses",
             metadata={"description": "Stock analysis results from StockSquad"},
         )
 
-        # Initialize Azure OpenAI client for embeddings with DefaultAzureCredential
-        token_provider = get_bearer_token_provider(
-            DefaultAzureCredential(),
-            "https://cognitiveservices.azure.com/.default"
-        )
-        self.openai_client = AzureOpenAI(
-            api_version=self.settings.azure_openai_api_version,
-            azure_endpoint=self.settings.azure_openai_endpoint,
-            azure_ad_token_provider=token_provider,
-        )
+        # Initialize Azure OpenAI client for embeddings
+        # Use API key if provided, otherwise fall back to managed identity
+        print("  [4/4] Initializing Azure OpenAI client...")
+        if self.settings.azure_openai_api_key:
+            print("       → Using API key authentication")
+            self.openai_client = AzureOpenAI(
+                api_version=self.settings.azure_openai_api_version,
+                azure_endpoint=self.settings.azure_openai_endpoint,
+                api_key=self.settings.azure_openai_api_key,
+            )
+        else:
+            # Use managed identity when no API key is provided
+            print("       → Using managed identity authentication")
+            token_provider = get_bearer_token_provider(
+                DefaultAzureCredential(),
+                "https://cognitiveservices.azure.com/.default"
+            )
+            self.openai_client = AzureOpenAI(
+                api_version=self.settings.azure_openai_api_version,
+                azure_endpoint=self.settings.azure_openai_endpoint,
+                azure_ad_token_provider=token_provider,
+            )
+
+        print("  ✅ LongTermMemory initialized successfully!")
+
+        # Initialize blob backup for persistence
+        print("  [5/5] Initializing blob backup...")
+        self.blob_backup = BlobBackupManager()
+        if self.blob_backup.enabled:
+            print("       → Blob backup enabled, restoring analyses...")
+            restored = self.blob_backup.restore_all_to_memory(self)
+            print(f"       → Restored {restored} analyses from blob storage")
+        else:
+            print("       → Blob backup disabled (no storage account configured)")
 
     def _generate_embedding(self, text: str) -> List[float]:
         """
@@ -145,22 +173,23 @@ class LongTermMemory:
             metadatas=[doc_metadata],
         )
 
-        # Store full analysis as JSON in a separate file
+        # Store full analysis as JSON in a separate file (local)
+        analysis_data = {
+            "ticker": ticker.upper(),
+            "timestamp": timestamp.isoformat(),
+            "summary": analysis_summary,
+            "full_analysis": full_analysis,
+            "metadata": doc_metadata,
+        }
+
         analysis_path = self.settings.chroma_db_path / "analyses"
         analysis_path.mkdir(exist_ok=True)
         with open(analysis_path / f"{doc_id}.json", "w") as f:
-            json.dump(
-                {
-                    "ticker": ticker.upper(),
-                    "timestamp": timestamp.isoformat(),
-                    "summary": analysis_summary,
-                    "full_analysis": full_analysis,
-                    "metadata": doc_metadata,
-                },
-                f,
-                indent=2,
-                cls=CustomJSONEncoder,
-            )
+            json.dump(analysis_data, f, indent=2, cls=CustomJSONEncoder)
+
+        # Backup to blob storage for persistence
+        if self.blob_backup.enabled:
+            self.blob_backup.save_analysis(doc_id, analysis_data)
 
         return doc_id
 

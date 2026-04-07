@@ -10,8 +10,14 @@ import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceDot, ReferenceLine
 } from 'recharts';
 import globalEventsData from './globalEvents.json';
+import { useAuth } from './contexts/AuthContext.jsx';
+import LoginModal from './components/LoginModal.jsx';
+import UserMenu from './components/UserMenu.jsx';
+import * as api from './utils/api.js';
 
 export default function App() {
+  const { userId, isAuthenticated, isLoading: authLoading, login, logout } = useAuth();
+
   const [reports, setReports] = useState([]);
   const [selectedReportId, setSelectedReportId] = useState(null);
   const [reportDetails, setReportDetails] = useState(null);
@@ -85,11 +91,11 @@ export default function App() {
     };
   };
 
-  const API_URL = import.meta.env.DEV ? 'http://127.0.0.1:8000' : '';
-
   useEffect(() => {
-    fetchReports();
-  }, []);
+    if (isAuthenticated) {
+      fetchReports();
+    }
+  }, [isAuthenticated]);
 
   useEffect(() => {
     document.documentElement.className = theme === 'light' ? 'light-theme' : '';
@@ -136,11 +142,12 @@ export default function App() {
   const fetchReports = async () => {
     try {
       setLoading(true);
-      const response = await fetch(`${API_URL}/api/reports`);
-      if (!response.ok) throw new Error('Failed to fetch reports');
-      const data = await response.json();
+      const data = await api.get('/api/reports');
       setReports(data);
     } catch (err) {
+      if (err.status === 401 || err.status === 403) {
+        logout(); // Force re-login if unauthorized
+      }
       setError(err.message);
     } finally {
       setLoading(false);
@@ -150,11 +157,12 @@ export default function App() {
   const fetchReportDetails = async (id) => {
     try {
       setLoadingDetails(true);
-      const response = await fetch(`${API_URL}/api/reports/${id}`);
-      if (!response.ok) throw new Error('Failed to fetch report details');
-      const data = await response.json();
+      const data = await api.get(`/api/reports/${id}`);
       setReportDetails(data);
     } catch (err) {
+      if (err.status === 401 || err.status === 403) {
+        logout();
+      }
       setError(err.message);
     } finally {
       setLoadingDetails(false);
@@ -167,10 +175,11 @@ export default function App() {
 
     setIsAnalyzing(true);
     setLogs([`> Starting Squad Analysis for ${tickerInput.toUpperCase()}...`]);
-    
-    // Connect to Server Sent Events
-    const sseUrl = `${API_URL}/api/analyze/stream?ticker=${tickerInput.toUpperCase()}&period=${periodInput}`;
-    const eventSource = new EventSource(sseUrl);
+
+    // Connect to Server Sent Events with authentication
+    try {
+      const sseUrl = `/api/analyze/stream?ticker=${tickerInput.toUpperCase()}&period=${periodInput}`;
+      const eventSource = api.createAuthenticatedSSE(sseUrl);
 
     eventSource.onmessage = (event) => {
       try {
@@ -198,11 +207,18 @@ export default function App() {
       }
     };
 
-    eventSource.onerror = () => {
-      setLogs(prev => [...prev, `[SYSTEM] Stream disconnected.`]);
-      eventSource.close();
+      eventSource.onerror = () => {
+        setLogs(prev => [...prev, `[SYSTEM] Stream disconnected.`]);
+        eventSource.close();
+        setIsAnalyzing(false);
+      };
+    } catch (err) {
+      setLogs(prev => [...prev, `[ERROR] ${err.message}`]);
       setIsAnalyzing(false);
-    };
+      if (err.message.includes('User ID required')) {
+        logout();
+      }
+    }
   };
 
   const formatDate = (dateString) => {
@@ -230,21 +246,13 @@ export default function App() {
     setChatLoading(true);
 
     try {
-      const response = await fetch(`${API_URL}/api/chat`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          message: userMessage,
-          ticker: reportDetails?.ticker,
-          doc_id: selectedReportId,
-          session_id: chatSessionId,
-          web_search: webSearchEnabled
-        })
+      const data = await api.post('/api/chat', {
+        message: userMessage,
+        ticker: reportDetails?.ticker,
+        doc_id: selectedReportId,
+        session_id: chatSessionId,
+        web_search: webSearchEnabled
       });
-
-      if (!response.ok) throw new Error('Chat request failed');
-
-      const data = await response.json();
 
       // Store session ID for continuation
       if (!chatSessionId) {
@@ -261,6 +269,9 @@ export default function App() {
       }]);
 
     } catch (err) {
+      if (err.status === 401 || err.status === 403) {
+        logout();
+      }
       setChatMessages(prev => [...prev, {
         role: 'error',
         content: `Failed to get response: ${err.message}`,
@@ -274,7 +285,7 @@ export default function App() {
   const clearChat = async () => {
     if (chatSessionId) {
       try {
-        await fetch(`${API_URL}/api/chat/${chatSessionId}`, { method: 'DELETE' });
+        await api.del(`/api/chat/${chatSessionId}`);
       } catch (err) {
         console.error('Failed to clear chat session:', err);
       }
@@ -309,9 +320,7 @@ export default function App() {
     setInsightsError(null);
 
     try {
-      const response = await fetch(`${API_URL}/api/reports/${selectedReportId}/date-insights?date=${isoDate}`);
-      if (!response.ok) throw new Error('Failed to fetch date insights');
-      const insights = await response.json();
+      const insights = await api.get(`/api/reports/${selectedReportId}/date-insights?date=${isoDate}`);
       setDateInsights(insights);
     } catch (err) {
       setInsightsError(err.message);
@@ -352,98 +361,264 @@ export default function App() {
   };
 
   const identifyImportantEvents = (earningsData, newsData, priceData) => {
-    if (!priceData) return [];
+    if (!priceData || priceData.length === 0) {
+      console.log('⚠️ No price data available for event matching');
+      return [];
+    }
 
     const events = [];
 
-    console.log('🔍 Processing events...');
-    console.log('Earnings dates:', earningsData?.length || 0);
-    console.log('News items:', newsData?.length || 0);
-    console.log('Price data points:', priceData.length);
+    console.log('🔍 Processing important events...');
+    console.log(`  • Earnings dates: ${earningsData?.length || 0}`);
+    console.log(`  • News items: ${newsData?.length || 0}`);
+    console.log(`  • Price data points: ${priceData.length}`);
+
+    // Get date range for debugging
+    const firstDate = format(new Date(priceData[0].Date), 'MMM d, yyyy');
+    const lastDate = format(new Date(priceData[priceData.length - 1].Date), 'MMM d, yyyy');
+    console.log(`  • Chart date range: ${firstDate} to ${lastDate}`);
 
     // Add earnings dates from yfinance
     if (earningsData && earningsData.length > 0) {
-      console.log('Sample earnings date:', earningsData[0]);
+      console.log('📊 Processing earnings dates...');
+      console.log('  Sample:', earningsData[0]);
 
       earningsData.forEach(earning => {
-        if (!earning.date) return;
+        if (!earning.date) {
+          console.log('  ⚠️ Skipping earning with no date:', earning);
+          return;
+        }
 
-        // Parse the date and format for matching
-        const earningDate = new Date(earning.date);
-        const dateStr = format(earningDate, 'MMM d, yyyy');
+        try {
+          // Parse the date and format for matching
+          const earningDate = new Date(earning.date);
+          if (isNaN(earningDate.getTime())) {
+            console.log(`  ⚠️ Invalid date: ${earning.date}`);
+            return;
+          }
 
-        // Check if this date exists in our chart data
-        const matchingDataPoint = priceData.find(p => {
-          const pDate = format(new Date(p.Date), 'MMM d, yyyy');
-          return pDate === dateStr;
-        });
+          const dateStr = format(earningDate, 'MMM d, yyyy');
 
-        if (matchingDataPoint) {
-          console.log(`✅ Earnings date found in chart: ${dateStr}`);
-          events.push({
-            date: dateStr,
-            type: 'earnings',
-            icon: '📊',
-            title: 'Earnings Report',
-            upcoming: earning.upcoming || false
+          // Check if this date exists in our chart data
+          const matchingDataPoint = priceData.find(p => {
+            try {
+              const pDate = format(new Date(p.Date), 'MMM d, yyyy');
+              return pDate === dateStr;
+            } catch (e) {
+              return false;
+            }
           });
-        } else {
-          console.log(`⚠️ Earnings date not in chart range: ${dateStr}`);
+
+          if (matchingDataPoint) {
+            console.log(`  ✅ Earnings: ${dateStr}`);
+            events.push({
+              date: dateStr,
+              type: 'earnings',
+              icon: '📊',
+              title: 'Earnings Report',
+              description: earning.upcoming ? 'Upcoming earnings' : 'Historical earnings',
+              upcoming: earning.upcoming || false,
+              reported: earning.reported
+            });
+          } else {
+            console.log(`  ⏭️ Out of range: ${dateStr}`);
+          }
+        } catch (e) {
+          console.log(`  ❌ Error processing earning:`, e);
         }
       });
+    } else {
+      console.log('📊 No earnings data available');
     }
 
-    // Also look for important events in news (acquisitions, FDA approvals, etc.)
+    // Look for important events in news and price action
     if (newsData && newsData.length > 0) {
+      console.log('⚡ Processing news for important events...');
+
+      // Comprehensive keyword list
       const importantKeywords = [
-        'acquisition', 'merger', 'acquire',
-        'fda approval', 'fda',
-        'lawsuit', 'investigation',
-        'ceo', 'chief executive',
-        'dividend increase', 'special dividend',
-        'stock split', 'split',
-        'partnership', 'strategic deal',
-        'breakthrough', 'unveils'
+        // Corporate actions
+        'acquisition', 'merger', 'acquire', 'acquired', 'acquiring', 'buys', 'bought', 'takeover',
+        // Regulatory
+        'fda approval', 'fda approves', 'fda clears', 'fda rejects', 'approved', 'clearance',
+        // Legal
+        'lawsuit', 'investigation', 'settles', 'settlement', 'probe', 'sued', 'fine', 'penalty',
+        // Leadership
+        'ceo', 'chief executive', 'appoints', 'resigns', 'steps down', 'new ceo', 'founder',
+        // Financial
+        'dividend increase', 'special dividend', 'dividend hike', 'dividend cut', 'buyback', 'share repurchase',
+        'stock split', 'split', 'reverse split',
+        // Partnerships
+        'partnership', 'strategic deal', 'collaboration', 'agreement', 'contract', 'deal',
+        // Products & Innovation
+        'breakthrough', 'unveils', 'launches', 'announces', 'reveals', 'introduces', 'release',
+        // Crisis
+        'bankruptcy', 'chapter 11', 'restructuring', 'layoffs', 'cuts jobs', 'closes',
+        // Earnings & Guidance
+        'beats estimates', 'misses estimates', 'guidance', 'outlook', 'forecast',
+        'revenue surge', 'profit surge', 'sales jump', 'record revenue', 'record profit',
+        // Market moving
+        'upgrade', 'downgrade', 'price target', 'initiates coverage',
+        'halt', 'halted', 'suspended', 'delisted',
+        // Other significant
+        'investigation', 'recall', 'shortage', 'surges', 'plunges', 'soars', 'tumbles'
       ];
+
+      let importantNewsCount = 0;
+
+      // Build a map of dates to price data for quick lookup
+      const priceByDate = new Map();
+      priceData.forEach(p => {
+        try {
+          const dateStr = format(new Date(p.Date), 'MMM d, yyyy');
+          const close = p.Close || p[`${priceData.ticker}_Close`] || 0;
+          const prevClose = priceByDate.size > 0 ? Array.from(priceByDate.values()).pop()?.close || close : close;
+          const changePercent = prevClose ? ((close - prevClose) / prevClose) * 100 : 0;
+
+          priceByDate.set(dateStr, {
+            dataPoint: p,
+            close: close,
+            changePercent: Math.abs(changePercent)
+          });
+        } catch (e) {
+          // Skip invalid dates
+        }
+      });
 
       newsData.forEach(article => {
         if (!article.published || !article.title) return;
 
-        const title = article.title.toLowerCase();
-        const pubDate = new Date(article.published);
-        const dateStr = format(pubDate, 'MMM d, yyyy');
+        try {
+          const title = article.title.toLowerCase();
+          const pubDate = new Date(article.published);
 
-        // Check if important event
-        const isImportant = importantKeywords.some(kw => title.includes(kw));
+          if (isNaN(pubDate.getTime())) return;
 
-        if (isImportant) {
-          const matchingDataPoint = priceData.find(p => {
-            const pDate = format(new Date(p.Date), 'MMM d, yyyy');
-            return pDate === dateStr;
-          });
+          const dateStr = format(pubDate, 'MMM d, yyyy');
 
-          if (matchingDataPoint) {
-            // Don't duplicate if we already have an earnings marker for this date
-            const alreadyMarked = events.some(e => e.date === dateStr);
-            if (!alreadyMarked) {
-              console.log(`✅ Important event: ${dateStr} - ${article.title}`);
+          // Check if important event by keyword
+          const matchedKeyword = importantKeywords.find(kw => title.includes(kw));
+
+          // Also check if there was a significant price move that day
+          const priceInfo = priceByDate.get(dateStr);
+          const significantMove = priceInfo && priceInfo.changePercent > 3;
+
+          // Include if: has keyword OR significant price move with news
+          if (matchedKeyword || significantMove) {
+            const matchingDataPoint = priceData.find(p => {
+              try {
+                const pDate = format(new Date(p.Date), 'MMM d, yyyy');
+                return pDate === dateStr;
+              } catch (e) {
+                return false;
+              }
+            });
+
+            if (matchingDataPoint) {
+              // Don't duplicate if we already have an important event for this date
+              const alreadyMarked = events.some(e => e.date === dateStr && e.type === 'important');
+              if (!alreadyMarked) {
+                importantNewsCount++;
+
+                const reason = matchedKeyword ? matchedKeyword : `${priceInfo.changePercent.toFixed(1)}% move`;
+                console.log(`  ✅ Event: ${dateStr} - "${article.title.substring(0, 50)}..." [${reason}]`);
+
+                events.push({
+                  date: dateStr,
+                  type: 'important',
+                  icon: '⚡',
+                  title: article.title,
+                  description: matchedKeyword
+                    ? `${article.publisher || 'News'} • ${matchedKeyword}`
+                    : `${article.publisher || 'News'} • ${priceInfo.changePercent.toFixed(1)}% price move`,
+                  publisher: article.publisher,
+                  link: article.link,
+                  keyword: matchedKeyword,
+                  significantMove: significantMove
+                });
+              }
+            }
+          }
+        } catch (e) {
+          console.log(`  ❌ Error processing article:`, e);
+        }
+      });
+
+      console.log(`  Found ${importantNewsCount} important news events in chart range`);
+
+      // If still no events, show top news on most volatile days
+      if (importantNewsCount === 0 && newsData.length > 0) {
+        console.log('  💡 No keyword matches - showing news on most volatile days...');
+
+        // Find the top 3-5 most volatile days
+        const volatileDays = Array.from(priceByDate.entries())
+          .sort((a, b) => b[1].changePercent - a[1].changePercent)
+          .slice(0, 5);
+
+        volatileDays.forEach(([dateStr, priceInfo]) => {
+          if (priceInfo.changePercent > 2) { // Only if >2% move
+            // Find news for this day
+            const newsForDay = newsData.filter(article => {
+              if (!article.published) return false;
+              try {
+                const articleDate = format(new Date(article.published), 'MMM d, yyyy');
+                return articleDate === dateStr;
+              } catch (e) {
+                return false;
+              }
+            });
+
+            if (newsForDay.length > 0 && !events.some(e => e.date === dateStr && e.type === 'important')) {
+              const topArticle = newsForDay[0]; // Take the first/most recent
+              console.log(`  📰 Adding: ${dateStr} - "${topArticle.title.substring(0, 40)}..." [${priceInfo.changePercent.toFixed(1)}% move]`);
+
               events.push({
                 date: dateStr,
                 type: 'important',
-                icon: '⚡',
-                title: article.title,
-                publisher: article.publisher,
-                link: article.link
+                icon: '📰',
+                title: topArticle.title,
+                description: `${topArticle.publisher || 'News'} • ${priceInfo.changePercent.toFixed(1)}% price move`,
+                publisher: topArticle.publisher,
+                link: topArticle.link,
+                volatileDay: true
               });
             }
           }
-        }
-      });
+        });
+      }
+    } else {
+      console.log('⚡ No news data available');
     }
 
-    console.log(`📊 Total events to display: ${events.length}`);
+    console.log(`\n📊 SUMMARY: ${events.length} total events to display`);
+    console.log(`  • Earnings: ${events.filter(e => e.type === 'earnings').length}`);
+    console.log(`  • Important news: ${events.filter(e => e.type === 'important').length}`);
+
+    if (events.length === 0) {
+      console.log('  ⚠️ No events found! Check if earnings_dates and recent_news are populated in the report.');
+    }
+
     return events;
   };
+
+  // Show login modal if not authenticated
+  if (authLoading) {
+    return (
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        height: '100vh',
+        backgroundColor: 'var(--bg-main)',
+      }}>
+        <Loader2 size={48} className="animate-spin text-blue-500" />
+      </div>
+    );
+  }
+
+  if (!isAuthenticated) {
+    return <LoginModal onLogin={login} />;
+  }
 
   return (
     <div className="app-container">
@@ -454,9 +629,12 @@ export default function App() {
             <LineChartIcon className="w-6 h-6 text-blue-500" />
             <h1>StockSquad</h1>
           </div>
-          <button onClick={toggleTheme} className="icon-btn" title="Toggle Theme">
-            {theme === 'dark' ? <Sun size={20}/> : <Moon size={20}/>}
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <button onClick={toggleTheme} className="icon-btn" title="Toggle Theme">
+              {theme === 'dark' ? <Sun size={20}/> : <Moon size={20}/>}
+            </button>
+            <UserMenu userId={userId} onLogout={logout} />
+          </div>
         </div>
         
         <button 
@@ -861,10 +1039,25 @@ export default function App() {
                 }
               }
 
+              // Debug: Log event counts
+              console.log('📊 Rendering chart with:', {
+                earningsEvents: importantEvents.filter(e => e.type === 'earnings').length,
+                importantNewsEvents: importantEvents.filter(e => e.type === 'important').length,
+                totalEvents: importantEvents.length,
+                sampleEvent: importantEvents[0]
+              });
+
               return (
-              <div className="chart-container" style={{ width: '100%', height: 380, marginBottom: 40, padding: 24, background: 'var(--bg-card)', borderRadius: 16, border: '1px solid var(--border-color)', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }}>
+              <div className="chart-container" style={{ width: '100%', minHeight: 380, marginBottom: 40, padding: 24, background: 'var(--bg-card)', borderRadius: 16, border: '1px solid var(--border-color)', boxShadow: '0 4px 20px rgba(0,0,0,0.1)' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: showGlobalEvents ? 8 : 16 }}>
-                  <h3 style={{ margin: 0, fontSize: '1.2rem', color: 'var(--text-main)', fontWeight: 600 }}>Historical Price Action</h3>
+                  <div>
+                    <h3 style={{ margin: 0, fontSize: '1.2rem', color: 'var(--text-main)', fontWeight: 600 }}>Historical Price Action</h3>
+                    {importantEvents.length > 0 && (
+                      <div style={{ fontSize: '0.75rem', color: 'var(--accent-blue)', marginTop: '4px' }}>
+                        {importantEvents.filter(e => e.type === 'earnings').length} earnings • {importantEvents.filter(e => e.type === 'important').length} important events
+                      </div>
+                    )}
+                  </div>
                   <button
                     onClick={() => setShowGlobalEvents(!showGlobalEvents)}
                     style={{
@@ -930,10 +1123,10 @@ export default function App() {
                   </div>
                 )}
                 <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: 12 }}>
-                  Click on any point to see what happened that day{tickerKeys.length > 1 ? ' · Click legend names to toggle' : ''}
+                  Click any point for insights{importantEvents.length > 0 ? ' · Click event markers for details' : ''}{tickerKeys.length > 1 ? ' · Click legend to toggle lines' : ''}
                   {showGlobalEvents && relevantGlobalEvents.length > 0 && ` · ${relevantGlobalEvents.length} global events shown`}
                 </p>
-                <ResponsiveContainer width="100%" height="90%">
+                <ResponsiveContainer width="100%" height={320}>
                   <LineChart data={chartData} onClick={handleChartClick} style={{ cursor: 'pointer' }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="var(--border-color)" vertical={false} />
                     <XAxis 
@@ -952,10 +1145,72 @@ export default function App() {
                       tickFormatter={(value) => `${value}%`}
                       domain={['auto', 'auto']}
                     />
-                    <Tooltip 
-                      contentStyle={{ backgroundColor: 'var(--bg-main)', border: '1px solid var(--border-color)', borderRadius: 8, color: 'var(--text-main)', boxShadow: '0 4px 12px rgba(0,0,0,0.2)' }}
+                    <Tooltip
+                      contentStyle={{ backgroundColor: 'var(--bg-main)', border: '1px solid var(--border-color)', borderRadius: 8, color: 'var(--text-main)', boxShadow: '0 4px 12px rgba(0,0,0,0.2)', padding: '12px' }}
                       itemStyle={{ fontWeight: 600 }}
                       formatter={(value, name) => hiddenSeries.has(name) ? null : [`${value}%`, name]}
+                      content={(props) => {
+                        if (!props.active || !props.payload || props.payload.length === 0) return null;
+
+                        const data = props.payload[0].payload;
+                        const date = data.date;
+
+                        // Find events for this date
+                        const dateEvents = importantEvents.filter(e => e.date === date);
+
+                        return (
+                          <div style={{ backgroundColor: 'var(--bg-main)', border: '1px solid var(--border-color)', borderRadius: 8, padding: '12px', boxShadow: '0 4px 12px rgba(0,0,0,0.2)' }}>
+                            <div style={{ fontWeight: 600, marginBottom: '8px', color: 'var(--text-main)' }}>{date}</div>
+                            {props.payload.map((item, idx) => {
+                              if (hiddenSeries.has(item.name)) return null;
+                              return (
+                                <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', marginBottom: '4px' }}>
+                                  <span style={{ color: item.color }}>{item.name}:</span>
+                                  <span style={{ fontWeight: 600 }}>{item.value}%</span>
+                                </div>
+                              );
+                            })}
+                            {dateEvents.length > 0 && (
+                              <>
+                                <div style={{ borderTop: '1px solid var(--border-color)', margin: '8px 0' }}></div>
+                                {dateEvents.map((event, idx) => {
+                                  const getColor = () => {
+                                    if (event.type === 'earnings') return '#10b981';
+                                    if (event.icon === '📰') return '#8b5cf6';
+                                    return '#f59e0b';
+                                  };
+
+                                  return (
+                                  <div key={idx} style={{ marginTop: '6px' }}>
+                                    <div style={{
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      gap: '6px',
+                                      fontSize: '0.9rem',
+                                      color: getColor(),
+                                      fontWeight: 600
+                                    }}>
+                                      <span>{event.icon}</span>
+                                      <span>{event.title}</span>
+                                    </div>
+                                    {event.description && (
+                                      <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginTop: '2px', marginLeft: '22px' }}>
+                                        {event.description}
+                                      </div>
+                                    )}
+                                    {event.link && (
+                                      <div style={{ fontSize: '0.75rem', color: 'var(--accent-blue)', marginTop: '2px', marginLeft: '22px' }}>
+                                        Click marker to open article
+                                      </div>
+                                    )}
+                                  </div>
+                                  );
+                                })}
+                              </>
+                            )}
+                          </div>
+                        );
+                      }}
                     />
                     <Legend
                       onClick={(e) => {
@@ -995,30 +1250,72 @@ export default function App() {
                       />
                     ))}
                     {/* Event Markers */}
+                    {importantEvents.length > 0 && console.log(`🎯 Attempting to render ${importantEvents.length} event markers...`)}
                     {importantEvents.map((event, idx) => {
                       // Find the data point for this event
                       const dataPoint = chartData.find(d => d.date === event.date);
-                      if (!dataPoint) return null;
+                      if (!dataPoint) {
+                        console.log(`⚠️ Event ${idx}: Could not find chart data for "${event.date}"`, event);
+                        console.log(`   Available dates:`, chartData.slice(0, 3).map(d => d.date));
+                        return null;
+                      }
 
                       // Use the main ticker's value for positioning
                       const yValue = dataPoint[tickerKeys[0]];
-                      if (yValue === undefined) return null;
+                      if (yValue === undefined) {
+                        console.log(`⚠️ Event ${idx}: No y-value found for ${event.date}, ticker key: ${tickerKeys[0]}`);
+                        console.log(`   Available keys in dataPoint:`, Object.keys(dataPoint));
+                        return null;
+                      }
+
+                      console.log(`✅ Event ${idx}: Rendering ${event.icon} at ${event.date}, y=${yValue}`);
+
+                      // Determine color based on event type/icon
+                      const getEventColor = () => {
+                        if (event.type === 'earnings') return '#10b981'; // Green for earnings
+                        if (event.icon === '📰') return '#8b5cf6'; // Purple for volatile days
+                        return '#f59e0b'; // Amber for important events
+                      };
 
                       return (
                         <ReferenceDot
                           key={`event-${idx}`}
                           x={event.date}
                           y={yValue}
-                          r={8}
-                          fill={event.type === 'earnings' ? '#10b981' : '#f59e0b'}
+                          r={10}
+                          fill={getEventColor()}
+                          fillOpacity={0.9}
                           stroke="#fff"
-                          strokeWidth={2}
+                          strokeWidth={2.5}
                           style={{ cursor: 'pointer' }}
+                          onClick={() => {
+                            // If it's a news event with a link, open it
+                            if (event.link) {
+                              window.open(event.link, '_blank', 'noopener,noreferrer');
+                            } else {
+                              // Otherwise show the date insights modal
+                              const isoDate = new Date(event.date).toISOString().split('T')[0];
+                              setSelectedDate(isoDate);
+                              setLoadingInsights(true);
+                              setInsightsError(null);
+
+                              api.get(`/api/reports/${selectedReportId}/date-insights?date=${isoDate}`)
+                                .then(insights => {
+                                  setDateInsights(insights);
+                                  setLoadingInsights(false);
+                                })
+                                .catch(err => {
+                                  setInsightsError(err.message);
+                                  setLoadingInsights(false);
+                                });
+                            }
+                          }}
                           label={{
                             value: event.icon,
                             position: 'top',
-                            fontSize: 16,
-                            offset: 10
+                            fontSize: 18,
+                            offset: 12,
+                            fill: getEventColor()
                           }}
                         />
                       );
@@ -1064,14 +1361,27 @@ export default function App() {
                   <div style={{ marginTop: '12px', display: 'flex', gap: '16px', fontSize: '0.85rem', color: 'var(--text-muted)', flexWrap: 'wrap', alignItems: 'center' }}>
                     {importantEvents.length > 0 && (
                       <>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                          <span style={{ fontSize: '16px' }}>📊</span>
-                          <span>Earnings</span>
-                        </div>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                          <span style={{ fontSize: '16px' }}>⚡</span>
-                          <span>Important Events</span>
-                        </div>
+                        {importantEvents.some(e => e.type === 'earnings') && (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <span style={{ fontSize: '16px' }}>📊</span>
+                            <span>Earnings</span>
+                            <span style={{ fontSize: '10px', color: 'var(--text-muted)', marginLeft: '2px' }}>(clickable)</span>
+                          </div>
+                        )}
+                        {importantEvents.some(e => e.icon === '⚡') && (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <span style={{ fontSize: '16px' }}>⚡</span>
+                            <span>Major Events</span>
+                            <span style={{ fontSize: '10px', color: 'var(--text-muted)', marginLeft: '2px' }}>(clickable)</span>
+                          </div>
+                        )}
+                        {importantEvents.some(e => e.icon === '📰') && (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <span style={{ fontSize: '16px' }}>📰</span>
+                            <span>Volatile Days</span>
+                            <span style={{ fontSize: '10px', color: 'var(--text-muted)', marginLeft: '2px' }}>(clickable)</span>
+                          </div>
+                        )}
                       </>
                     )}
                     {showGlobalEvents && relevantGlobalEvents.length > 0 && (
@@ -1094,8 +1404,8 @@ export default function App() {
                         </div>
                       </>
                     )}
-                    <div style={{ marginLeft: 'auto', color: 'var(--text-muted)', fontSize: '0.8rem' }}>
-                      {importantEvents.length + (showGlobalEvents ? relevantGlobalEvents.length : 0)} event{(importantEvents.length + (showGlobalEvents ? relevantGlobalEvents.length : 0)) !== 1 ? 's' : ''} marked
+                    <div style={{ marginLeft: 'auto', color: 'var(--text-muted)', fontSize: '0.8rem', fontStyle: 'italic' }}>
+                      {importantEvents.length + (showGlobalEvents ? relevantGlobalEvents.length : 0)} event{(importantEvents.length + (showGlobalEvents ? relevantGlobalEvents.length : 0)) !== 1 ? 's' : ''} marked • Hover for details
                     </div>
                   </div>
                 )}

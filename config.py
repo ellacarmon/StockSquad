@@ -68,6 +68,16 @@ class Settings(BaseSettings):
         description="Logging level"
     )
 
+    # Authorization (Permit.io)
+    permit_io_api_key: Optional[str] = Field(
+        default=None,
+        description="Permit.io API key for authorization"
+    )
+    permit_io_pdp_url: str = Field(
+        default="https://cloudpdp.api.permit.io",
+        description="Permit.io Policy Decision Point URL"
+    )
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         # Ensure ChromaDB directory exists

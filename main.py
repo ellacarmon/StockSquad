@@ -20,6 +20,7 @@ from config import get_settings
 from agents.orchestrator import OrchestratorAgent
 from agents.chat_agent import ChatAgent
 from memory.long_term import LongTermMemory
+from skills import register_all_skills
 
 # Initialize Typer app and Rich console
 app = typer.Typer(
@@ -368,6 +369,9 @@ def version():
 def main():
     """Main entry point."""
     try:
+        # Register all skills at startup
+        register_all_skills()
+
         app()
     except Exception as e:
         console.print(f"[bold red]Fatal error:[/bold red] {str(e)}")
