@@ -59,6 +59,9 @@ export default function App() {
   const [showGlobalEvents, setShowGlobalEvents] = useState(false);
   const [hiddenEventCategories, setHiddenEventCategories] = useState(new Set());
 
+  // Earnings toggle
+  const [showEarnings, setShowEarnings] = useState(true); // Default: show earnings
+
   const toggleEventCategory = (category) => {
     setHiddenEventCategories(prev => {
       const next = new Set(prev);
@@ -134,6 +137,8 @@ export default function App() {
       setChatSessionId(null);
       // Don't force-close chat on report switch — keep user's preference
       setHiddenSeries(new Set());
+      setShowEarnings(true); // Reset to show earnings by default
+      setShowGlobalEvents(false); // Reset global events toggle
     }
   }, [selectedReportId]);
 
@@ -1058,6 +1063,32 @@ export default function App() {
                       </div>
                     )}
                   </div>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <button
+                      onClick={() => setShowEarnings(!showEarnings)}
+                      style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        padding: '6px 12px',
+                        fontSize: '0.85rem',
+                        backgroundColor: showEarnings ? '#10b981' : 'var(--bg-main)',
+                        color: showEarnings ? 'white' : 'var(--text-muted)',
+                        border: '1px solid var(--border-color)',
+                        borderRadius: '6px',
+                        cursor: 'pointer',
+                        transition: 'all 0.2s',
+                      }}
+                      onMouseEnter={(e) => {
+                        if (!showEarnings) e.currentTarget.style.backgroundColor = 'var(--bg-card)';
+                      }}
+                      onMouseLeave={(e) => {
+                        if (!showEarnings) e.currentTarget.style.backgroundColor = 'var(--bg-main)';
+                      }}
+                    >
+                      <span style={{ fontSize: '16px' }}>📊</span>
+                      <span>Earnings</span>
+                    </button>
                   <button
                     onClick={() => setShowGlobalEvents(!showGlobalEvents)}
                     style={{
@@ -1083,6 +1114,7 @@ export default function App() {
                     <Globe size={14} />
                     <span>Global Events</span>
                   </button>
+                  </div>
                 </div>
                 {showGlobalEvents && (
                   <div style={{ display: 'flex', gap: '6px', marginBottom: 10, flexWrap: 'wrap' }}>
@@ -1125,6 +1157,7 @@ export default function App() {
                 <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: 12 }}>
                   Click any point for insights{importantEvents.length > 0 ? ' · Click event markers for details' : ''}{tickerKeys.length > 1 ? ' · Click legend to toggle lines' : ''}
                   {showGlobalEvents && relevantGlobalEvents.length > 0 && ` · ${relevantGlobalEvents.length} global events shown`}
+                  {importantEvents.some(e => e.type === 'earnings') && ` · Toggle earnings button to ${showEarnings ? 'hide' : 'show'}`}
                 </p>
                 <ResponsiveContainer width="100%" height={320}>
                   <LineChart data={chartData} onClick={handleChartClick} style={{ cursor: 'pointer' }}>
@@ -1251,7 +1284,7 @@ export default function App() {
                     ))}
                     {/* Event Markers */}
                     {importantEvents.length > 0 && console.log(`🎯 Attempting to render ${importantEvents.length} event markers...`)}
-                    {importantEvents.map((event, idx) => {
+                    {importantEvents.filter(event => showEarnings || event.type !== 'earnings').map((event, idx) => {
                       // Find the data point for this event
                       const dataPoint = chartData.find(d => d.date === event.date);
                       if (!dataPoint) {
@@ -1361,7 +1394,7 @@ export default function App() {
                   <div style={{ marginTop: '12px', display: 'flex', gap: '16px', fontSize: '0.85rem', color: 'var(--text-muted)', flexWrap: 'wrap', alignItems: 'center' }}>
                     {importantEvents.length > 0 && (
                       <>
-                        {importantEvents.some(e => e.type === 'earnings') && (
+                        {showEarnings && importantEvents.some(e => e.type === 'earnings') && (
                           <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                             <span style={{ fontSize: '16px' }}>📊</span>
                             <span>Earnings</span>
@@ -1405,7 +1438,12 @@ export default function App() {
                       </>
                     )}
                     <div style={{ marginLeft: 'auto', color: 'var(--text-muted)', fontSize: '0.8rem', fontStyle: 'italic' }}>
-                      {importantEvents.length + (showGlobalEvents ? relevantGlobalEvents.length : 0)} event{(importantEvents.length + (showGlobalEvents ? relevantGlobalEvents.length : 0)) !== 1 ? 's' : ''} marked • Hover for details
+                      {(() => {
+                        const visibleEvents = importantEvents.filter(e => showEarnings || e.type !== 'earnings').length;
+                        const globalCount = showGlobalEvents ? relevantGlobalEvents.length : 0;
+                        const total = visibleEvents + globalCount;
+                        return `${total} event${total !== 1 ? 's' : ''} marked • Hover for details`;
+                      })()}
                     </div>
                   </div>
                 )}

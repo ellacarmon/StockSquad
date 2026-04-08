@@ -55,11 +55,21 @@ class Settings(BaseSettings):
         default=None,
         description="Alpha Vantage API key (optional)"
     )
+    xpoz_api_key: Optional[str] = Field(
+        default=None,
+        description="xpoz.ai API key for social media sentiment (optional)"
+    )
 
     # ChromaDB
     chroma_db_path: Path = Field(
         default=Path("./chroma_db"),
         description="Path to ChromaDB storage"
+    )
+
+    # Data Fetching Options
+    fetch_earnings_dates: bool = Field(
+        default=False,
+        description="Fetch earnings dates (can be slow, disable to speed up analysis)"
     )
 
     # Logging

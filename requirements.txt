@@ -31,6 +31,7 @@ structlog>=24.1.0
 tweepy>=4.14.0  # X (Twitter) API
 praw>=7.7.1  # Reddit API
 textblob>=0.17.1  # Simple sentiment analysis
+xpoz>=0.1.0  # xpoz.ai unified social media API (Twitter, Reddit, TikTok, Instagram)
 
 # Telegram Bot (Phase 3)
 python-telegram-bot>=20.7  # Telegram bot framework

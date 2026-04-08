@@ -17,9 +17,17 @@ from agents.data_agent import DataAgent
 from agents.technical_agent import TechnicalAgent
 from agents.sentiment_agent import SentimentAgent
 from agents.social_media_agent import SocialMediaAgent
+from agents.social_sentiment_agent import SocialSentimentAgent
 from agents.fundamentals_agent import FundamentalsAgent
 from agents.devils_advocate import DevilsAdvocateAgent
 from ml.training.data_collector import HistoricalDataCollector
+from skills import register_all_skills
+from skills.registry import SkillsRegistry
+
+# Ensure skills are registered at module import time
+if not SkillsRegistry.list_skills():
+    print("[orchestrator.py] Registering skills at import time...")
+    register_all_skills()
 
 
 class OrchestratorAgent:
@@ -73,6 +81,11 @@ Provide balanced, multi-dimensional analysis. Acknowledge uncertainty."""
 
     def __init__(self):
         """Initialize the OrchestratorAgent."""
+        # Ensure skills are registered before creating any agents
+        if not SkillsRegistry.list_skills():
+            print("[OrchestratorAgent] Skills not registered, registering now...")
+            register_all_skills()
+
         self.settings = get_settings()
         self.client = self._initialize_client()
         self.assistant = None
@@ -289,7 +302,7 @@ Provide balanced, multi-dimensional analysis. Acknowledge uncertainty."""
                     content=f"Technical analysis error: {str(e)}"
                 )
 
-        # Step 5: Run SocialMediaAgent analysis
+        # Step 5: Run SocialMediaAgent analysis (Grok-based)
         social_media_result = None
         try:
             print(f"[{self.AGENT_NAME}] Running social media analysis...")
@@ -309,6 +322,28 @@ Provide balanced, multi-dimensional analysis. Acknowledge uncertainty."""
                 agent=self.AGENT_NAME,
                 role="system",
                 content=f"Social media analysis error: {str(e)}"
+            )
+
+        # Step 5b: Run SocialSentimentAgent analysis (xpoz.ai multi-platform)
+        social_sentiment_result = None
+        try:
+            print(f"[{self.AGENT_NAME}] Running xpoz.ai social sentiment analysis...")
+
+            social_sentiment_agent = SocialSentimentAgent(memory=memory)
+            social_sentiment_result = social_sentiment_agent.analyze_sentiment(ticker, days_back=7)
+            social_sentiment_agent.cleanup()
+
+            memory.add_message(
+                agent=self.AGENT_NAME,
+                role="assistant",
+                content="SocialSentimentAgent analysis complete"
+            )
+        except Exception as e:
+            print(f"[{self.AGENT_NAME}] xpoz.ai social sentiment analysis failed: {e}")
+            memory.add_message(
+                agent=self.AGENT_NAME,
+                role="system",
+                content=f"xpoz.ai social sentiment error: {str(e)}"
             )
 
         # Step 6: Run FundamentalsAgent analysis
@@ -399,14 +434,32 @@ Provide balanced, multi-dimensional analysis. Acknowledge uncertainty."""
 
             if overall and overall.get('sentiment'):
                 agent_reports.append(
-                    f"**SocialMediaAgent Report:**\n"
+                    f"**SocialMediaAgent Report (Grok-based):**\n"
                     f"Retail Sentiment: {overall.get('sentiment')} "
                     f"({overall.get('stats', {}).get('bullish_pct', 0):.1f}% Bullish, "
                     f"{overall.get('stats', {}).get('bearish_pct', 0):.1f}% Bearish)\n\n"
                     f"{social_report}"
                 )
             else:
-                agent_reports.append(f"**SocialMediaAgent Report:**\n{social_report}")
+                agent_reports.append(f"**SocialMediaAgent Report (Grok-based):**\n{social_report}")
+
+        if social_sentiment_result and social_sentiment_result.get('report'):
+            xpoz_report = social_sentiment_result.get('report', '')
+            xpoz_sentiment = social_sentiment_result.get('structured_sentiment', {})
+            overall_xpoz = xpoz_sentiment.get('overall_sentiment', {})
+            post_count = social_sentiment_result.get('post_count', 0)
+
+            if overall_xpoz and overall_xpoz.get('direction'):
+                agent_reports.append(
+                    f"**SocialSentimentAgent Report (xpoz.ai - Multi-Platform):**\n"
+                    f"Overall Sentiment: {overall_xpoz.get('direction', 'N/A').upper()} "
+                    f"(Score: {overall_xpoz.get('score', 50)}/100, "
+                    f"Confidence: {overall_xpoz.get('confidence', 0)}%)\n"
+                    f"Total Posts Analyzed: {post_count} across Twitter/X, Reddit, TikTok, Instagram\n\n"
+                    f"{xpoz_report}"
+                )
+            else:
+                agent_reports.append(f"**SocialSentimentAgent Report (xpoz.ai):**\n{xpoz_report}")
 
         if fundamentals_result and fundamentals_result.get('report'):
             fund_report = fundamentals_result.get('report', '')
@@ -450,18 +503,21 @@ Your task is to produce a final, integrated investment research report that:
 2. **Company Overview** (from DataAgent findings)
 3. **Technical Analysis Summary** (trend, momentum, ML signal score)
 4. **Fundamental Analysis Summary** (valuation, profitability, growth, health)
-5. **News Sentiment Analysis** (institutional perspective, news themes)
-6. **Social Media Sentiment** (retail investor mood from X/Reddit)
+5. **News Sentiment Analysis** (institutional perspective, news themes from SentimentAgent)
+6. **Social Media Sentiment** (retail investor mood):
+   - Grok-based analysis (SocialMediaAgent - X/Twitter & Reddit)
+   - Multi-platform analysis (SocialSentimentAgent - xpoz.ai: Twitter, Reddit, TikTok, Instagram)
 7. **Risk Assessment** (Devil's Advocate challenges and concerns)
-7. **Multi-Agent Synthesis** (how do perspectives align or conflict?)
-8. **Investment Thesis**:
+8. **Multi-Agent Synthesis** (how do perspectives align or conflict?)
+9. **Investment Thesis**:
    - Bull Case (strongest arguments for investing)
    - Bear Case (strongest arguments against)
-9. **Final Recommendation** (BUY/HOLD/SELL with confidence level)
-10. **Key Risks to Monitor**
-11. **Comparison to Past Analyses** (if available)
+10. **Final Recommendation** (BUY/HOLD/SELL with confidence level)
+11. **Key Risks to Monitor**
+12. **Comparison to Past Analyses** (if available)
 
-Integrate all agent perspectives. Acknowledge where agents disagree. Be balanced and objective.
+Integrate all agent perspectives. Pay special attention to comparing the two social sentiment sources (Grok vs xpoz.ai).
+Acknowledge where agents disagree. Be balanced and objective.
 Provide clear, actionable guidance for investors."""
 
         # Send message to orchestrator assistant
@@ -532,6 +588,8 @@ Provide clear, actionable guidance for investors."""
             agents_involved.append(SentimentAgent.AGENT_NAME)
         if social_media_result:
             agents_involved.append(SocialMediaAgent.AGENT_NAME)
+        if social_sentiment_result:
+            agents_involved.append(SocialSentimentAgent.AGENT_NAME)
         if fundamentals_result:
             agents_involved.append(FundamentalsAgent.AGENT_NAME)
         if devils_advocate_result:
@@ -544,6 +602,7 @@ Provide clear, actionable guidance for investors."""
             "technical_analysis": technical_result,
             "sentiment_analysis": sentiment_result,
             "social_media_analysis": social_media_result,
+            "social_sentiment_analysis": social_sentiment_result,
             "fundamental_analysis": fundamentals_result,
             "devils_advocate": devils_advocate_result,
             "final_report": final_report,
@@ -581,6 +640,7 @@ Provide clear, actionable guidance for investors."""
             "technical_analysis_completed": technical_result is not None,
             "sentiment_analysis_completed": sentiment_result is not None,
             "social_media_analysis_completed": social_media_result is not None,
+            "social_sentiment_analysis_completed": social_sentiment_result is not None,
             "fundamental_analysis_completed": fundamentals_result is not None,
             "devils_advocate_completed": devils_advocate_result is not None,
             "thread_id": thread.id,
