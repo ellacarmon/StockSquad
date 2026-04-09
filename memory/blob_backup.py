@@ -190,3 +190,33 @@ class BlobBackupManager:
         except Exception as e:
             logger.error(f"Failed to restore analyses: {e}")
             return 0
+
+    def delete_analysis(self, doc_id: str) -> bool:
+        """
+        Delete an analysis from blob storage.
+
+        Args:
+            doc_id: Document ID to delete
+
+        Returns:
+            True if deleted successfully, False otherwise
+        """
+        if not self.enabled:
+            logger.info("Blob backup not enabled - skipping blob deletion")
+            return False
+
+        try:
+            blob_name = f"analyses/{doc_id}.json"
+            blob_client = self.container_client.get_blob_client(blob_name)
+
+            if blob_client.exists():
+                blob_client.delete_blob()
+                logger.info(f"Deleted analysis from blob storage: {blob_name}")
+                return True
+            else:
+                logger.warning(f"Blob not found in storage: {blob_name}")
+                return False
+
+        except Exception as e:
+            logger.error(f"Failed to delete analysis {doc_id} from blob storage: {e}")
+            return False

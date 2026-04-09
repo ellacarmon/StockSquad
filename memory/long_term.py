@@ -340,14 +340,13 @@ class LongTermMemory:
             print(f"Failed to delete {doc_id} local file: {e}")
             success = False
 
+        # Delete from blob storage if enabled
         try:
-            # Delete from blob storage if enabled
-            if self.blob_backup.enabled:
-                blob_name = f"analyses/{doc_id}.json"
-                blob_client = self.blob_backup.container_client.get_blob_client(blob_name)
-                if blob_client.exists():
-                    blob_client.delete_blob()
-                    print(f"Deleted {doc_id} from blob storage")
+            blob_deleted = self.blob_backup.delete_analysis(doc_id)
+            if blob_deleted:
+                print(f"Deleted {doc_id} from blob storage")
+            elif self.blob_backup.enabled:
+                print(f"Warning: {doc_id} not found in blob storage")
         except Exception as e:
             print(f"Failed to delete {doc_id} from blob storage: {e}")
             success = False
