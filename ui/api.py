@@ -264,6 +264,19 @@ async def get_report_detail(doc_id: str, user_id: str = Depends(get_current_user
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.delete("/api/reports/{doc_id}")
+async def delete_report(doc_id: str, user_id: str = Depends(get_current_user)):
+    """Delete an analysis report."""
+    if not memory:
+        raise HTTPException(status_code=500, detail="Memory not initialized")
+    try:
+        success = memory.delete_analysis(doc_id)
+        if not success:
+            raise HTTPException(status_code=500, detail="Failed to delete analysis")
+        return {"success": True, "message": f"Deleted analysis {doc_id}"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/api/reports/{doc_id}/date-insights")
 async def get_date_insights(doc_id: str, date: str, user_id: str = Depends(get_current_user)):
     """

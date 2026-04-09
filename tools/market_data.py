@@ -437,12 +437,8 @@ class MarketDataFetcher:
                 "recent_news": self.get_recent_news(ticker),
             }
 
-            # Optionally fetch earnings dates (can be slow)
-            if self.settings.fetch_earnings_dates:
-                data["earnings_dates"] = self.get_earnings_dates(ticker)
-            else:
-                data["earnings_dates"] = []
-                print(f"[MarketDataFetcher] Skipping earnings dates (fetch_earnings_dates=False)")
+            # Fetch earnings dates
+            data["earnings_dates"] = self.get_earnings_dates(ticker)
 
             return data
         except Exception as e:

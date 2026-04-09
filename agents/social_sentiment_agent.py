@@ -110,7 +110,7 @@ Analyze objectively. Flag suspicious coordinated activity. Weight verified accou
             # Import xpoz SDK
             import xpoz
             print(f"[{self.AGENT_NAME}] xpoz package imported successfully (v{xpoz.__version__ if hasattr(xpoz, '__version__') else 'unknown'})")
-            client = xpoz.Client(api_key=self.settings.xpoz_api_key)
+            client = xpoz.XpozClient(api_key=self.settings.xpoz_api_key)
             print(f"[{self.AGENT_NAME}] xpoz.ai client initialized successfully")
             return client
         except ImportError as e:
@@ -175,60 +175,61 @@ Analyze objectively. Flag suspicious coordinated activity. Weight verified accou
 
         try:
             for query in queries:
-                # Query each platform via xpoz.ai
-                # Note: Actual API methods may differ - this is a template based on typical REST APIs
+                # Query each platform via xpoz.ai using platform-specific methods
 
                 # Twitter/X
                 try:
-                    twitter_posts = self.xpoz_client.search_posts(
+                    twitter_result = self.xpoz_client.twitter.search_posts(
                         query=query,
-                        platform="twitter",
-                        start_date=start_date.isoformat(),
-                        end_date=end_date.isoformat(),
                         limit=max_results_per_platform
                     )
-                    platforms["twitter"].extend(twitter_posts)
+                    # Get posts from PaginatedResult.data
+                    for post in twitter_result.data:
+                        try:
+                            platforms["twitter"].append(post.model_dump() if hasattr(post, 'model_dump') else post)
+                        except Exception as e:
+                            # Skip individual posts with validation errors
+                            print(f"[{self.AGENT_NAME}] Skipping invalid Twitter post: {e}")
+                            continue
+                    print(f"[{self.AGENT_NAME}] Twitter: Found {len(platforms['twitter'])} valid posts for '{query}'")
                 except Exception as e:
-                    print(f"[{self.AGENT_NAME}] Twitter query failed: {e}")
+                    print(f"[{self.AGENT_NAME}] Twitter query '{query}' failed: {e}")
 
                 # Reddit
                 try:
-                    reddit_posts = self.xpoz_client.search_posts(
+                    reddit_result = self.xpoz_client.reddit.search_posts(
                         query=query,
-                        platform="reddit",
-                        start_date=start_date.isoformat(),
-                        end_date=end_date.isoformat(),
                         limit=max_results_per_platform
                     )
-                    platforms["reddit"].extend(reddit_posts)
+                    for post in reddit_result.data:
+                        platforms["reddit"].append(post.model_dump() if hasattr(post, 'model_dump') else post)
+                    print(f"[{self.AGENT_NAME}] Reddit: Found {len(reddit_result.data)} posts for '{query}'")
                 except Exception as e:
-                    print(f"[{self.AGENT_NAME}] Reddit query failed: {e}")
+                    print(f"[{self.AGENT_NAME}] Reddit query '{query}' failed: {e}")
 
                 # TikTok
                 try:
-                    tiktok_posts = self.xpoz_client.search_posts(
+                    tiktok_result = self.xpoz_client.tiktok.search_posts(
                         query=query,
-                        platform="tiktok",
-                        start_date=start_date.isoformat(),
-                        end_date=end_date.isoformat(),
                         limit=max_results_per_platform
                     )
-                    platforms["tiktok"].extend(tiktok_posts)
+                    for post in tiktok_result.data:
+                        platforms["tiktok"].append(post.model_dump() if hasattr(post, 'model_dump') else post)
+                    print(f"[{self.AGENT_NAME}] TikTok: Found {len(tiktok_result.data)} posts for '{query}'")
                 except Exception as e:
-                    print(f"[{self.AGENT_NAME}] TikTok query failed: {e}")
+                    print(f"[{self.AGENT_NAME}] TikTok query '{query}' failed: {e}")
 
                 # Instagram
                 try:
-                    instagram_posts = self.xpoz_client.search_posts(
+                    instagram_result = self.xpoz_client.instagram.search_posts(
                         query=query,
-                        platform="instagram",
-                        start_date=start_date.isoformat(),
-                        end_date=end_date.isoformat(),
                         limit=max_results_per_platform
                     )
-                    platforms["instagram"].extend(instagram_posts)
+                    for post in instagram_result.data:
+                        platforms["instagram"].append(post.model_dump() if hasattr(post, 'model_dump') else post)
+                    print(f"[{self.AGENT_NAME}] Instagram: Found {len(instagram_result.data)} posts for '{query}'")
                 except Exception as e:
-                    print(f"[{self.AGENT_NAME}] Instagram query failed: {e}")
+                    print(f"[{self.AGENT_NAME}] Instagram query '{query}' failed: {e}")
 
             # Deduplicate posts by ID within each platform
             for platform in platforms:

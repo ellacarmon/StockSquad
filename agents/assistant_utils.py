@@ -25,7 +25,7 @@ def wait_for_run_completion(
     run_id: str,
     timeout: int = 180,  # 3 minutes default
     poll_interval: float = 1.0,
-    max_same_status_count: int = 60  # Cancel if stuck in same status for 60 polls
+    max_same_status_count: int = 120  # Cancel if stuck in same status for 120 polls (2 minutes)
 ) -> Any:
     """
     Wait for an assistant run to complete with intelligent monitoring.

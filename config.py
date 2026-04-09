@@ -66,12 +66,6 @@ class Settings(BaseSettings):
         description="Path to ChromaDB storage"
     )
 
-    # Data Fetching Options
-    fetch_earnings_dates: bool = Field(
-        default=False,
-        description="Fetch earnings dates (can be slow, disable to speed up analysis)"
-    )
-
     # Logging
     log_level: str = Field(
         default="INFO",

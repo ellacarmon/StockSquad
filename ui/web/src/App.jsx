@@ -4,7 +4,7 @@ import { format, parseISO } from 'date-fns';
 import {
   LineChart as LineChartIcon, LayoutDashboard, Loader2, FileText,
   AlertCircle, Moon, Sun, Plus, Terminal, Play, MessageCircle, Send, X, Globe,
-  PanelRightClose, PanelRightOpen
+  PanelRightClose, PanelRightOpen, Trash2
 } from 'lucide-react';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceDot, ReferenceLine
@@ -143,6 +143,32 @@ export default function App() {
   }, [selectedReportId]);
 
   const toggleTheme = () => setTheme(prev => prev === 'dark' ? 'light' : 'dark');
+
+  const deleteReport = async (reportId, e) => {
+    e.stopPropagation(); // Prevent triggering report selection
+
+    if (!confirm('Are you sure you want to delete this analysis? This cannot be undone.')) {
+      return;
+    }
+
+    try {
+      await api.del(`/api/reports/${reportId}`);
+
+      // Refresh reports list
+      await fetchReports();
+
+      // Clear selection if deleted report was selected
+      if (selectedReportId === reportId) {
+        setSelectedReportId(null);
+        setReportDetails(null);
+      }
+    } catch (err) {
+      if (err.status === 401 || err.status === 403) {
+        logout();
+      }
+      alert(`Failed to delete report: ${err.message}`);
+    }
+  };
 
   const fetchReports = async () => {
     try {
@@ -683,9 +709,36 @@ export default function App() {
                 <div
                   className={`report-item ${isSelected ? 'active' : ''}`}
                   onClick={() => setSelectedReportId(report.id)}
+                  style={{ position: 'relative' }}
                 >
                   <div className="report-item-header">
                     <span className="report-date">{formatDate(report.metadata.timestamp)}</span>
+                    <button
+                      onClick={(e) => deleteReport(report.id, e)}
+                      className="delete-report-btn"
+                      title="Delete this analysis"
+                      style={{
+                        background: 'transparent',
+                        border: 'none',
+                        cursor: 'pointer',
+                        padding: '4px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        color: 'var(--text-muted)',
+                        opacity: 0.6,
+                        transition: 'all 0.2s',
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.opacity = '1';
+                        e.currentTarget.style.color = '#ef4444';
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.opacity = '0.6';
+                        e.currentTarget.style.color = 'var(--text-muted)';
+                      }}
+                    >
+                      <Trash2 size={14} />
+                    </button>
                   </div>
                   <div className="report-summary">
                     {report.summary}

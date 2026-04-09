@@ -535,28 +535,46 @@ Provide clear, actionable guidance for investors."""
 
         # Wait for completion with timeout
         from agents.assistant_utils import wait_for_run_completion, AssistantTimeoutError
+        final_report = None
         try:
             run = wait_for_run_completion(
                 client=self.client,
                 thread_id=thread.id,
                 run_id=run.id,
-                timeout=180  # 3 minutes max
+                timeout=300  # 5 minutes max (increased for complex synthesis with xpoz data)
             )
+
+            # Get the final report
+            messages = self.client.beta.threads.messages.list(thread_id=thread.id)
+            assistant_messages = [
+                msg for msg in messages.data
+                if msg.role == "assistant" and msg.created_at > message.created_at
+            ]
+
+            if assistant_messages:
+                final_report = assistant_messages[0].content[0].text.value
+            else:
+                final_report = None
+
         except AssistantTimeoutError as e:
-            print(f"[{self.AGENT_NAME}] Timeout: {e}")
-            return None
+            print(f"[{self.AGENT_NAME}] Synthesis timeout: {e}")
+            print(f"[{self.AGENT_NAME}] Generating fallback report with agent outputs...")
+            final_report = None
 
-        # Get the final report
-        messages = self.client.beta.threads.messages.list(thread_id=thread.id)
-        assistant_messages = [
-            msg for msg in messages.data
-            if msg.role == "assistant" and msg.created_at > message.created_at
-        ]
-
-        if assistant_messages:
-            final_report = assistant_messages[0].content[0].text.value
-        else:
-            final_report = "Failed to generate final report"
+        # Generate fallback report if synthesis failed
+        if not final_report:
+            print(f"[{self.AGENT_NAME}] Using fallback report format (synthesis unavailable)")
+            fallback_sections = [
+                f"# Stock Analysis Report: {ticker}",
+                f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+                "",
+                "**Note**: Automated synthesis timed out. Below are the individual agent reports.",
+                "",
+                "---",
+                ""
+            ]
+            fallback_sections.extend(agent_reports)
+            final_report = "\n".join(fallback_sections)
 
         print(f"[{self.AGENT_NAME}] Report synthesis complete")
 

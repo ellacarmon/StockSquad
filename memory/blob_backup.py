@@ -152,22 +152,39 @@ class BlobBackupManager:
         try:
             doc_ids = self.list_analyses()
             restored_count = 0
+            skipped_count = 0
+
+            # Get existing doc IDs from ChromaDB to avoid duplicates
+            try:
+                existing = memory_instance.collection.get()
+                existing_ids = set(existing['ids']) if existing and 'ids' in existing else set()
+                logger.info(f"Found {len(existing_ids)} existing analyses in ChromaDB")
+            except Exception as e:
+                logger.warning(f"Failed to check existing analyses: {e}")
+                existing_ids = set()
 
             for doc_id in doc_ids:
+                # Skip if already exists in ChromaDB
+                if doc_id in existing_ids:
+                    skipped_count += 1
+                    continue
+
                 analysis_data = self.load_analysis(doc_id)
                 if analysis_data:
-                    # Store in ChromaDB
+                    # Store in ChromaDB with original doc_id
                     try:
-                        memory_instance.store_analysis(
+                        memory_instance._restore_analysis_with_id(
+                            doc_id=doc_id,
                             ticker=analysis_data.get("ticker"),
                             analysis_summary=analysis_data.get("summary"),
                             full_analysis=analysis_data.get("full_analysis"),
+                            metadata=analysis_data.get("metadata"),
                         )
                         restored_count += 1
                     except Exception as e:
                         logger.error(f"Failed to restore {doc_id} to ChromaDB: {e}")
 
-            logger.info(f"Restored {restored_count}/{len(doc_ids)} analyses from blob storage")
+            logger.info(f"Restored {restored_count} new analyses, skipped {skipped_count} existing (total {len(doc_ids)} in blob storage)")
             return restored_count
 
         except Exception as e:

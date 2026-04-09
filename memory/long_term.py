@@ -193,6 +193,61 @@ class LongTermMemory:
 
         return doc_id
 
+    def _restore_analysis_with_id(
+        self,
+        doc_id: str,
+        ticker: str,
+        analysis_summary: str,
+        full_analysis: Dict[str, Any],
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """
+        Restore an analysis with a specific document ID (used when restoring from backup).
+
+        Args:
+            doc_id: Existing document ID to use
+            ticker: Stock ticker
+            analysis_summary: Text summary for embedding/search
+            full_analysis: Complete analysis data
+            metadata: Optional additional metadata
+
+        Returns:
+            Document ID of stored analysis
+        """
+        # Generate embedding for the summary
+        embedding = self._generate_embedding(analysis_summary)
+
+        # Use provided metadata or extract from analysis
+        doc_metadata = metadata or {
+            "ticker": ticker.upper(),
+            "timestamp": full_analysis.get("timestamp", datetime.now().isoformat()),
+            "date": full_analysis.get("timestamp", datetime.now().isoformat())[:10],
+        }
+
+        # Store in ChromaDB with original doc_id
+        self.collection.add(
+            ids=[doc_id],
+            embeddings=[embedding],
+            documents=[analysis_summary],
+            metadatas=[doc_metadata],
+        )
+
+        # Store full analysis as JSON in a separate file (local)
+        analysis_data = {
+            "ticker": ticker.upper(),
+            "timestamp": doc_metadata.get("timestamp"),
+            "summary": analysis_summary,
+            "full_analysis": full_analysis,
+            "metadata": doc_metadata,
+        }
+
+        analysis_path = self.settings.chroma_db_path / "analyses"
+        analysis_path.mkdir(exist_ok=True)
+        with open(analysis_path / f"{doc_id}.json", "w") as f:
+            json.dump(analysis_data, f, indent=2, cls=CustomJSONEncoder)
+
+        return doc_id
+
     def retrieve_past_analyses(
         self,
         ticker: str,
@@ -254,6 +309,50 @@ class LongTermMemory:
         )
 
         return analyses[:limit]
+
+    def delete_analysis(self, doc_id: str) -> bool:
+        """
+        Delete an analysis from all storage locations.
+
+        Args:
+            doc_id: Document ID to delete
+
+        Returns:
+            True if deleted successfully, False otherwise
+        """
+        success = True
+
+        try:
+            # Delete from ChromaDB
+            self.collection.delete(ids=[doc_id])
+            print(f"Deleted {doc_id} from ChromaDB")
+        except Exception as e:
+            print(f"Failed to delete {doc_id} from ChromaDB: {e}")
+            success = False
+
+        try:
+            # Delete local JSON file
+            analysis_path = self.settings.chroma_db_path / "analyses" / f"{doc_id}.json"
+            if analysis_path.exists():
+                analysis_path.unlink()
+                print(f"Deleted {doc_id} local file")
+        except Exception as e:
+            print(f"Failed to delete {doc_id} local file: {e}")
+            success = False
+
+        try:
+            # Delete from blob storage if enabled
+            if self.blob_backup.enabled:
+                blob_name = f"analyses/{doc_id}.json"
+                blob_client = self.blob_backup.container_client.get_blob_client(blob_name)
+                if blob_client.exists():
+                    blob_client.delete_blob()
+                    print(f"Deleted {doc_id} from blob storage")
+        except Exception as e:
+            print(f"Failed to delete {doc_id} from blob storage: {e}")
+            success = False
+
+        return success
 
     def semantic_search(
         self, query: str, ticker: Optional[str] = None, limit: int = 5
